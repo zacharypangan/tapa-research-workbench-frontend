@@ -14,6 +14,7 @@ import ChatInterface from './components/ChatInterface';
 import DataTable from './components/DataTable';
 import Catalog from './components/Catalog';
 import LegendPanel from './components/LegendPanel';
+import RepositoryWorkbench from './components/RepositoryWorkbench';
 import { API_BASE_URL } from './config';
 import './App.css';
 
@@ -86,6 +87,7 @@ function App() {
   const [activeTableLayerId, setActiveTableLayerId] = useState<string | null>(null);
   const [showTableOverlay, setShowTableOverlay] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [isRepositoryOpen, setIsRepositoryOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [windowPositions, setWindowPositions] = useState<Record<string, {x: number, y: number, w: number, h: number}>>({});
   const [baseMapStyle, setBaseMapStyle] = useState<string | any>('https://tiles.openfreemap.org/styles/dark');
@@ -1294,6 +1296,17 @@ function App() {
         className="absolute top-3 z-50 flex flex-col gap-2 items-end transition-[right] duration-300 ease-in-out"
         style={{ right: isChatOpen ? 'calc(400px + 0.75rem)' : '0.75rem' }}
       >
+        <button
+            onClick={() => setIsRepositoryOpen(true)}
+            className="group flex items-center justify-center h-12 px-4 shadow-2xl transition-all border rounded-full backdrop-blur font-black uppercase text-[10px] tracking-wider bg-white/90 border-gray-100 text-slate-700 hover:bg-slate-50"
+            title="Research Repository"
+        >
+            <svg className="w-4 h-4 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 19.5A2.5 2.5 0 016.5 17H20M4 4.5A2.5 2.5 0 016.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15z" />
+            </svg>
+            Workbench
+        </button>
+
         <button 
             onClick={handleToggleDrawing}
             className={`group flex items-center justify-center h-12 px-4 shadow-2xl transition-all border rounded-full backdrop-blur font-black uppercase text-[10px] tracking-wider
@@ -1354,6 +1367,10 @@ function App() {
             onClose={() => setIsCatalogOpen(false)}
             uploadedDatasets={uploadedDatasets}
         />
+      )}
+
+      {isRepositoryOpen && (
+        <RepositoryWorkbench onClose={() => setIsRepositoryOpen(false)} />
       )}
 
       {detailWindows.map(window => {
