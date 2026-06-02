@@ -9,6 +9,7 @@ The app supports:
 - metadata capture
 - extracted text/search/report workflows
 - source-linked observations for terms, motifs, places, materials, and processes
+- optional evidence-only semantic retrieval and Ask Corpus workflows
 
 This repo can be pushed and tracked independently while still integrating with the original frontend through the files listed in `INTEGRATION.md`.
 
@@ -51,6 +52,19 @@ Output Directory: dist
 ```
 
 Set `VITE_API_BASE_URL` in Vercel Project Settings if the backend URL changes.
+
+## Optional Evidence Assistant
+
+The Evidence Assistant is intentionally secondary to exact search. It uses the backend Ollama retrieval endpoints only when Ollama is configured there.
+
+It is designed to:
+
+- find semantically related passages
+- answer questions only from retrieved corpus evidence
+- show citations back to exact source/page/segment records
+- surface related human observations
+
+It is not designed to assign motif meaning, cultural interpretation, or analytical categories automatically.
 
 ## Standalone Repository Setup
 

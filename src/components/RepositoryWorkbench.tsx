@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { API_BASE_URL } from '../config';
 
 interface RepositoryFile {
@@ -137,6 +137,76 @@ interface SearchReport {
   total_matches: number;
   cooccurrence_count: number;
   results: SearchReportResult[];
+}
+
+interface AIStatus {
+  provider_configured: boolean;
+  embedding_model?: string;
+  chat_model?: string;
+  segment_count?: number;
+  embedded_segment_count?: number;
+  default_mode?: string;
+  status_message?: string;
+}
+
+interface SemanticResult {
+  segment_id: number;
+  material_id: string;
+  material_title: string;
+  material_authors?: string | null;
+  material_year?: string | null;
+  source_kind: string;
+  source_locator: string;
+  page_ref: string;
+  page_index: number;
+  content_text: string;
+  score: number;
+}
+
+interface SemanticSearchResponse {
+  query: string;
+  provider_configured: boolean;
+  embedding_model?: string;
+  results: SemanticResult[];
+  related_observations: Observation[];
+  evidence_note?: string;
+}
+
+interface AskCorpusResponse {
+  question: string;
+  provider_configured: boolean;
+  answer: string;
+  citations?: Array<{
+    material_id: string;
+    material_title: string;
+    material_authors?: string | null;
+    material_year?: string | null;
+    segment_id: number;
+    page_ref: string;
+    source_locator: string;
+  }>;
+  retrieved_passages?: SemanticResult[];
+  related_observations?: Observation[];
+  evidence_note?: string;
+}
+
+interface AIEvidenceReport {
+  query: string;
+  provider_configured: boolean;
+  themes: Array<{
+    theme: string;
+    material_id: string;
+    material_title: string;
+    citations: AskCorpusResponse['citations'];
+    passages: Array<{
+      segment_id: number;
+      page_ref: string;
+      score: number;
+      content_text: string;
+    }>;
+  }>;
+  related_observations: Observation[];
+  evidence_note?: string;
 }
 
 const EMPTY_FORM = {
@@ -419,6 +489,25 @@ function buildHighlightRegex(terms: string[]) {
   return new RegExp(`(${patterns.join('|')})`, 'gi');
 }
 
+function buildQueryTerms(query: string) {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const commaTerms = trimmed
+    .split(',')
+    .map((term) => term.trim())
+    .filter((term) => term.length > 1);
+
+  if (commaTerms.length > 1) return commaTerms;
+
+  const wordTerms = trimmed
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length > 2);
+
+  return [trimmed, ...wordTerms];
+}
+
 function highlightSearchTerms(text: string, terms: string[]) {
   const regex = buildHighlightRegex(terms);
 
@@ -485,8 +574,17 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [isGeneratingSearchReport, setIsGeneratingSearchReport] = useState(false);
   const [searchReport, setSearchReport] = useState<SearchReport | null>(null);
   const [showSearchReportModal, setShowSearchReportModal] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
+  const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
+  const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
+  const [isRunningSemanticSearch, setIsRunningSemanticSearch] = useState(false);
+  const [isAskingCorpus, setIsAskingCorpus] = useState(false);
+  const [isGeneratingAiReport, setIsGeneratingAiReport] = useState(false);
+  const [targetSegmentId, setTargetSegmentId] = useState<number | string | null>(null);
   const [isPreparingReportPrint] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const segmentListRef = useRef<HTMLDivElement | null>(null);
 
   const buildRepositoryUrls = useCallback((path: string) => {
     return [`${API_BASE_URL}/repository${path}`, `${API_BASE_URL}${path}`];
@@ -532,6 +630,9 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         observation.source_locator,
     ).length;
   }, [observations]);
+
+  const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
+  const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
 
   const loadMaterials = useCallback(async () => {
     const params = new URLSearchParams();
@@ -605,6 +706,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     repositoryFetch('/observation-types')
       .then((response) => (response.ok ? response.json() : { observation_types: Object.keys(OBSERVATION_TYPE_LABELS) }))
       .then((data) => setObservationTypes(data.observation_types || Object.keys(OBSERVATION_TYPE_LABELS)))
+      .catch(() => {});
+    repositoryFetch('/ai/status')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setAiStatus(data))
       .catch(() => {});
   }, [repositoryFetch]);
 
@@ -737,9 +842,11 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const openAnnotationWorkspace = (
     materialId: string,
     tab: 'segments' | 'links' | 'observations' | 'runs' = 'segments',
+    segmentId?: number | string | null,
   ) => {
     setSelectedId(materialId);
     setExtractedModalTab(tab);
+    setTargetSegmentId(segmentId ?? null);
     setIsExtractedModalOpen(true);
   };
 
@@ -994,6 +1101,116 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   }
 };
 
+  const runSemanticSearch = async () => {
+    const query = fullTextQuery.trim();
+    if (query.length < 2) {
+      setSemanticResults(null);
+      return;
+    }
+
+    setIsRunningSemanticSearch(true);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch('/ai/semantic-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          limit: 12,
+          include_observations: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'Semantic search failed');
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setSemanticResults(data);
+      setAskCorpusResult(null);
+      setAiEvidenceReport(null);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Semantic search failed'));
+    } finally {
+      setIsRunningSemanticSearch(false);
+    }
+  };
+
+  const askCorpus = async () => {
+    const question = fullTextQuery.trim();
+    if (question.length < 2) {
+      setAskCorpusResult(null);
+      return;
+    }
+
+    setIsAskingCorpus(true);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch('/ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          max_results: 8,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'Cited Answer failed');
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setAskCorpusResult(data);
+      setSemanticResults(null);
+      setAiEvidenceReport(null);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Cited Answer failed'));
+    } finally {
+      setIsAskingCorpus(false);
+    }
+  };
+
+  const generateAiEvidenceReport = async () => {
+    const query = fullTextQuery.trim();
+    if (query.length < 2) {
+      setAiEvidenceReport(null);
+      return;
+    }
+
+    setIsGeneratingAiReport(true);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch('/ai/evidence-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          limit: 16,
+          include_observations: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'AI evidence report failed');
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setAiEvidenceReport(data);
+      setSemanticResults(null);
+      setAskCorpusResult(null);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'AI evidence report failed'));
+    } finally {
+      setIsGeneratingAiReport(false);
+    }
+  };
+
   useEffect(() => {
     if (!selectedMaterial?.id) {
       setExtractedPreview(null);
@@ -1004,6 +1221,18 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     loadExtractedPreview(selectedMaterial.id).catch(() => {});
     loadObservations(selectedMaterial.id).catch(() => {});
   }, [loadExtractedPreview, loadObservations, selectedMaterial?.id]);
+
+  useEffect(() => {
+    if (!isExtractedModalOpen || extractedModalTab !== 'segments' || !targetSegmentId || !extractedPreview) return;
+
+    window.setTimeout(() => {
+      const target = segmentListRef.current?.querySelector<HTMLElement>(
+        `[data-segment-id="${String(targetSegmentId)}"]`,
+      );
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.focus({ preventScroll: true });
+    }, 80);
+  }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetSegmentId]);
 
   const createLinkMaterial = async () => {
     const trimmedUrl = linkForm.source_url.trim();
@@ -1426,6 +1655,16 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               </div>
             </div>
             <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
+              <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Search Corpus
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Start with exact text matches, then continue into related evidence or cited answers.
+                  </p>
+                </div>
+              </div>
               <div className="flex items-center gap-2">
                 <input
                   value={fullTextQuery}
@@ -1442,7 +1681,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   disabled={isSearchingText}
                   className="h-10 rounded-lg bg-slate-900 px-4 text-xs font-black uppercase tracking-wider text-white disabled:opacity-40"
                 >
-                  {isSearchingText ? 'Searching' : 'Search'}
+                  {isSearchingText ? 'Searching' : 'Exact Search'}
                 </button>
 
                 <button
@@ -1451,7 +1690,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   disabled={isGeneratingSearchReport || fullTextQuery.trim().length < 2}
                   className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
-                  {isGeneratingSearchReport ? 'Generating' : 'Report'}
+                  {isGeneratingSearchReport ? 'Generating' : 'Exact Report'}
                 </button>
               </div>
               {searchResults.length > 0 && (
@@ -1459,13 +1698,178 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   {searchResults.map((result) => (
                     <button
                       key={`${result.id}-${result.material_id}`}
-                      onClick={() => setSelectedId(result.material_id)}
+                      onClick={() => openAnnotationWorkspace(result.material_id, 'segments', result.id)}
                       className="block w-full border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50 last:border-b-0"
                     >
                       <div className="text-xs font-bold text-slate-700 truncate">{result.material_title}</div>
                       <div className="text-[11px] text-slate-500 truncate">{result.page_ref} · {result.source_locator}</div>
-                      <div className="text-[11px] text-slate-600">{result.snippet_text}</div>
+                      <div className="text-[11px] text-slate-600">
+                        {highlightSearchTerms(result.snippet_text, activeQueryTerms)}
+                      </div>
                     </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Continue With Assisted Review
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Optional Ollama tools for the same query. Use related passages for discovery, or RAG answer when you need a cited synthesis.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={runSemanticSearch}
+                    disabled={!evidenceAssistantReady || isRunningSemanticSearch || fullTextQuery.trim().length < 2}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    {isRunningSemanticSearch ? 'Finding' : 'Find Related Passages'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={askCorpus}
+                    disabled={!evidenceAssistantReady || isAskingCorpus || fullTextQuery.trim().length < 2}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    {isAskingCorpus ? 'Reading' : 'Cited Answer (RAG)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generateAiEvidenceReport}
+                    disabled={!evidenceAssistantReady || isGeneratingAiReport || fullTextQuery.trim().length < 2}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    {isGeneratingAiReport ? 'Grouping' : 'Group Evidence'}
+                  </button>
+                </div>
+              </div>
+
+              {aiStatus && !aiStatus.provider_configured && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {aiStatus.status_message || 'Semantic retrieval is inactive until Ollama is configured and running.'}
+                </div>
+              )}
+
+              {semanticResults && (
+                <div className="mt-3 space-y-3">
+                  <div className="text-xs text-slate-500">
+                    {semanticResults.evidence_note}
+                  </div>
+                  {semanticResults.results.length === 0 && (
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm text-slate-400">
+                      No semantic evidence results returned.
+                    </div>
+                  )}
+                  {semanticResults.results.slice(0, 5).map((result) => (
+                    <button
+                      key={`${result.segment_id}-${result.material_id}`}
+                      type="button"
+                      onClick={() => {
+                        openAnnotationWorkspace(result.material_id, 'segments', result.segment_id);
+                      }}
+                      className="block w-full rounded-lg border border-slate-100 bg-slate-50 p-3 text-left hover:bg-blue-50"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 truncate text-sm font-black text-slate-800">
+                          {result.material_title}
+                        </div>
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          {(result.score * 100).toFixed(1)} match
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        {result.page_ref} · {result.source_locator}
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                        {highlightSearchTerms(cleanAnnotationText(result.content_text), activeQueryTerms)}
+                      </div>
+                    </button>
+                  ))}
+                  {semanticResults.related_observations.length > 0 && (
+                    <div className="rounded-lg border border-slate-100 bg-white p-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Related Observations
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {semanticResults.related_observations.slice(0, 12).map((observation) => (
+                          <span
+                            key={observation.id}
+                            className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${getObservationBadgeClass(observation.observation_type)}`}
+                          >
+                            {OBSERVATION_TYPE_LABELS[observation.observation_type] || observation.observation_type}: {observation.observed_text}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {askCorpusResult && (
+                <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    Cited Answer (RAG)
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Retrieval-augmented answer from cited passages only. Use this for synthesis after checking the source hits.
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                    {askCorpusResult.answer}
+                  </p>
+                  {askCorpusResult.citations && askCorpusResult.citations.length > 0 && (
+                    <div className="mt-3 border-t border-slate-200 pt-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Citations
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {askCorpusResult.citations.map((citation, index) => (
+                          <button
+                            key={`${citation.segment_id}-${index}`}
+                            type="button"
+                            onClick={() => {
+                              openAnnotationWorkspace(citation.material_id, 'segments', citation.segment_id);
+                            }}
+                            className="block w-full rounded-lg bg-white px-3 py-2 text-left text-xs text-slate-600 hover:bg-blue-50"
+                          >
+                            [{index + 1}] {citation.material_title} · {citation.page_ref}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {aiEvidenceReport && (
+                <div className="mt-3 space-y-3">
+                  <div className="text-xs text-slate-500">
+                    {aiEvidenceReport.evidence_note}
+                  </div>
+                  {aiEvidenceReport.themes.map((theme) => (
+                    <div key={theme.material_id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <div className="text-sm font-black text-slate-800">{theme.material_title}</div>
+                      <div className="mt-2 space-y-2">
+                        {theme.passages.slice(0, 3).map((passage) => (
+                          <button
+                            key={passage.segment_id}
+                            type="button"
+                            onClick={() => openAnnotationWorkspace(theme.material_id, 'segments', passage.segment_id)}
+                            className="block w-full rounded-lg bg-white p-3 text-left text-xs leading-relaxed text-slate-600 hover:bg-blue-50"
+                          >
+                            <div className="mb-1 font-bold text-slate-400">
+                              {passage.page_ref} · {(passage.score * 100).toFixed(1)} match
+                            </div>
+                            {highlightSearchTerms(truncateText(cleanAnnotationText(passage.content_text), 320), activeQueryTerms)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1934,7 +2338,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               )}
 
               {extractedPreview && extractedModalTab === 'segments' && (
-                <div className="space-y-3">
+                <div ref={segmentListRef} className="space-y-3">
                   <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">
                     Select a word or phrase in a source segment, then click Mark Observation. The selected text, page reference, locator, and context are carried into the observation form.
                   </div>
@@ -1943,16 +2347,31 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   )}
                   {extractedPreview.segments.map((segment, index) => {
                     const segmentText = getSegmentText(segment);
+                    const isTargetSegment = String(segment.id) === String(targetSegmentId);
                     return (
-                      <div key={segment.id || index} className="rounded-lg border border-slate-100 bg-white p-4">
+                      <div
+                        key={segment.id || index}
+                        data-segment-id={String(segment.id)}
+                        tabIndex={-1}
+                        className={`rounded-lg border p-4 outline-none transition ${
+                          isTargetSegment
+                            ? 'border-blue-300 bg-blue-50 shadow-sm ring-2 ring-blue-100'
+                            : 'border-slate-100 bg-white'
+                        }`}
+                      >
                         <div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          <span className="truncate">{segment.page_ref || `Segment ${index + 1}`}</span>
+                          <span className="truncate">
+                            {segment.page_ref || `Segment ${index + 1}`}
+                            {isTargetSegment ? ' · cited result' : ''}
+                          </span>
                           <span className="shrink-0">{segment.char_count ?? segmentText.length} chars</span>
                         </div>
                         <div className="mb-3 truncate text-[10px] text-slate-400">
                           {segment.source_kind || 'source'} · {segment.source_locator || 'unknown locator'}
                         </div>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{segmentText}</p>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                          {highlightSearchTerms(segmentText, activeQueryTerms)}
+                        </p>
                         <div className="mt-3 flex justify-end">
                           <button
                             type="button"
