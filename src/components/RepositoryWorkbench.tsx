@@ -1425,51 +1425,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                 </p>
               </div>
             </div>
-            {selectedMaterial && !isCreating && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-black text-slate-800">
-                      {selectedMaterial.title || 'Untitled material'}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-400">
-                      <span>{selectedMaterial.segment_count ?? 0} text segments</span>
-                      <span>{selectedMaterial.observation_count ?? observations.length} observations</span>
-                      <span>{selectedMaterial.file_count} files</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openAnnotationWorkspace(selectedMaterial.id, 'segments')}
-                      disabled={(selectedMaterial.segment_count ?? 0) === 0}
-                      className="h-9 rounded-lg bg-slate-900 px-3 text-[10px] font-black uppercase tracking-wider text-white disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Annotate Text
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openAnnotationWorkspace(selectedMaterial.id, 'observations')}
-                      className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-                    >
-                      Observations
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => extractMaterialText(selectedMaterial.id, (selectedMaterial.segment_count ?? 0) > 0)}
-                      disabled={extractingMaterialId === selectedMaterial.id}
-                      className="h-9 rounded-lg border border-amber-200 bg-amber-50 px-3 text-[10px] font-black uppercase tracking-wider text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {extractingMaterialId === selectedMaterial.id
-                        ? 'Extracting'
-                        : (selectedMaterial.segment_count ?? 0) > 0
-                          ? 'Re-extract'
-                          : 'Extract Text'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
             <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
               <div className="flex items-center gap-2">
                 <input
