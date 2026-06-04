@@ -71,6 +71,7 @@ interface ExtractedPreview {
     status?: string;
     created_at?: string;
   }>;
+  images?: ImageEvidence[];
   runs: Array<{
     id: string;
     include_links?: number;
@@ -89,6 +90,7 @@ interface Observation {
   id: string;
   material_id: string;
   source_segment_id?: number | null;
+  source_image_id?: string | null;
   observation_type: string;
   observed_text: string;
   source_page_ref?: string | null;
@@ -145,11 +147,14 @@ interface AIStatus {
   chat_model?: string;
   segment_count?: number;
   embedded_segment_count?: number;
+  image_evidence_count?: number;
+  embedded_image_count?: number;
   default_mode?: string;
   status_message?: string;
 }
 
 interface SemanticResult {
+  evidence_type?: string;
   segment_id: number;
   material_id: string;
   material_title: string;
@@ -161,6 +166,35 @@ interface SemanticResult {
   page_index: number;
   content_text: string;
   score: number;
+  semantic_score?: number;
+  retrieval_basis?: string;
+}
+
+interface ImageEvidence {
+  evidence_type: 'document_image' | 'page_snapshot' | 'slide_image' | string;
+  image_id: string;
+  material_id: string;
+  file_id?: string | null;
+  material_title?: string;
+  material_authors?: string | null;
+  material_year?: string | null;
+  source_kind: string;
+  source_locator: string;
+  page_ref: string;
+  page_index: number;
+  image_url: string;
+  mime_type?: string | null;
+  width?: number;
+  height?: number;
+  extraction_method?: string;
+  ocr_text?: string | null;
+  visual_caption?: string | null;
+  semantic_score?: number;
+  score?: number;
+  matched_terms?: string[];
+  contains_exact_term?: boolean;
+  retrieval_basis?: string;
+  evidence_level?: string;
 }
 
 interface SemanticSearchResponse {
@@ -168,6 +202,7 @@ interface SemanticSearchResponse {
   provider_configured: boolean;
   embedding_model?: string;
   results: SemanticResult[];
+  image_results?: ImageEvidence[];
   related_observations: Observation[];
   evidence_note?: string;
 }
@@ -186,6 +221,7 @@ interface AskCorpusResponse {
     source_locator: string;
   }>;
   retrieved_passages?: SemanticResult[];
+  image_results?: ImageEvidence[];
   related_observations?: Observation[];
   evidence_note?: string;
 }
@@ -204,7 +240,9 @@ interface AIEvidenceReport {
       score: number;
       content_text: string;
     }>;
+    image_passages?: ImageEvidence[];
   }>;
+  image_results?: ImageEvidence[];
   related_observations: Observation[];
   evidence_note?: string;
 }
@@ -236,6 +274,7 @@ const EMPTY_OBSERVATION_FORM = {
   observation_type: 'term',
   observed_text: '',
   source_segment_id: '',
+  source_image_id: '',
   source_page_ref: '',
   source_locator: '',
   context_quote: '',
@@ -450,7 +489,7 @@ function highlightSearchTermsHtml(text: string, terms: string[]) {
   const patterns = expandedTerms
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)
-    .map((term) => escapeHtml(term).replace(/\s+/g, '\\s+'));
+    .map((term) => escapeRegExp(escapeHtml(term)).replace(/\s+/g, '\\s+'));
 
   if (!patterns.length) {
     return escapedText;
@@ -532,6 +571,26 @@ function highlightSearchTerms(text: string, terms: string[]) {
   });
 }
 
+function getRetrievalReason(text: string, terms: string[], score?: number) {
+  const regex = buildHighlightRegex(terms);
+  const cleanedText = cleanAnnotationText(text || '');
+  const scoreText = typeof score === 'number' ? `${(score * 100).toFixed(1)} semantic score` : 'semantic score';
+
+  if (!regex || !cleanedText) {
+    return `Retrieved by embedding similarity (${scoreText}); no exact search token was available for comparison.`;
+  }
+
+  regex.lastIndex = 0;
+  const hasLiteralTerm = regex.test(cleanedText);
+  regex.lastIndex = 0;
+
+  if (hasLiteralTerm) {
+    return `Contains the search term or an expanded variant; also ranked by embedding similarity (${scoreText}).`;
+  }
+
+  return `Retrieved by embedding similarity (${scoreText}); the exact search token does not appear in this passage. Review as a possible conceptual neighbor, not a direct text match.`;
+}
+
 async function parseErrorResponse(response: Response, fallback: string) {
   try {
     const data = await response.json();
@@ -567,8 +626,9 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [isSavingObservation, setIsSavingObservation] = useState(false);
   const [extractingMaterialId, setExtractingMaterialId] = useState<string | null>(null);
   const [isExtractedModalOpen, setIsExtractedModalOpen] = useState(false);
-  const [extractedModalTab, setExtractedModalTab] = useState<'segments' | 'links' | 'observations' | 'runs'>('segments');
+  const [extractedModalTab, setExtractedModalTab] = useState<'segments' | 'images' | 'links' | 'observations' | 'runs'>('segments');
   const [fullTextQuery, setFullTextQuery] = useState('');
+  const [citedQuestion, setCitedQuestion] = useState('');
   const [isSearchingText, setIsSearchingText] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isGeneratingSearchReport, setIsGeneratingSearchReport] = useState(false);
@@ -578,13 +638,15 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
+  const [showProcessReferencesPanel, setShowProcessReferencesPanel] = useState(false);
   const [isRunningSemanticSearch, setIsRunningSemanticSearch] = useState(false);
   const [isAskingCorpus, setIsAskingCorpus] = useState(false);
   const [isGeneratingAiReport, setIsGeneratingAiReport] = useState(false);
   const [targetSegmentId, setTargetSegmentId] = useState<number | string | null>(null);
-  const [isPreparingReportPrint] = useState(false);
+  const [targetImageId, setTargetImageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const segmentListRef = useRef<HTMLDivElement | null>(null);
+  const imageListRef = useRef<HTMLDivElement | null>(null);
 
   const buildRepositoryUrls = useCallback((path: string) => {
     return [`${API_BASE_URL}/repository${path}`, `${API_BASE_URL}${path}`];
@@ -603,6 +665,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     },
     [buildRepositoryUrls],
   );
+
+  const loadAiStatus = useCallback(async () => {
+    const response = await repositoryFetch('/ai/status');
+    if (!response.ok) return;
+    const data = await response.json();
+    setAiStatus(data);
+  }, [repositoryFetch]);
 
   const selectedStatusCount = useMemo(() => {
     return materials.filter((material) => material.status === statusFilter).length;
@@ -626,6 +695,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     return observations.filter(
       (observation) =>
         observation.source_segment_id ||
+        observation.source_image_id ||
         observation.source_page_ref ||
         observation.source_locator,
     ).length;
@@ -633,6 +703,22 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
   const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
+  const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
+
+  const clearExactSearch = () => {
+    setFullTextQuery('');
+    setSearchResults([]);
+    setSearchReport(null);
+    setShowSearchReportModal(false);
+  };
+
+  const clearAssistedSearch = () => {
+    setSemanticResults(null);
+    setAskCorpusResult(null);
+    setAiEvidenceReport(null);
+    setCitedQuestion('');
+    setShowProcessReferencesPanel(false);
+  };
 
   const loadMaterials = useCallback(async () => {
     const params = new URLSearchParams();
@@ -707,11 +793,8 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       .then((response) => (response.ok ? response.json() : { observation_types: Object.keys(OBSERVATION_TYPE_LABELS) }))
       .then((data) => setObservationTypes(data.observation_types || Object.keys(OBSERVATION_TYPE_LABELS)))
       .catch(() => {});
-    repositoryFetch('/ai/status')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => setAiStatus(data))
-      .catch(() => {});
-  }, [repositoryFetch]);
+    loadAiStatus().catch(() => {});
+  }, [loadAiStatus, repositoryFetch]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -727,13 +810,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       setError(getErrorMessage(err, 'Failed to load material'));
     });
   }, [loadSelectedMaterial, selectedId]);
-
-  const startNewMaterial = () => {
-    setSelectedId(null);
-    setSelectedMaterial(null);
-    setForm(EMPTY_FORM);
-    setIsCreating(true);
-  };
 
   const saveMaterial = async () => {
     setIsSaving(true);
@@ -841,12 +917,14 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
   const openAnnotationWorkspace = (
     materialId: string,
-    tab: 'segments' | 'links' | 'observations' | 'runs' = 'segments',
+    tab: 'segments' | 'images' | 'links' | 'observations' | 'runs' = 'segments',
     segmentId?: number | string | null,
+    imageId?: string | null,
   ) => {
     setSelectedId(materialId);
     setExtractedModalTab(tab);
     setTargetSegmentId(segmentId ?? null);
+    setTargetImageId(imageId ?? null);
     setIsExtractedModalOpen(true);
   };
 
@@ -869,11 +947,30 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     setExtractedModalTab('observations');
   };
 
+  const startObservationFromImage = (image: ImageEvidence) => {
+    const context = cleanAnnotationText(
+      [image.visual_caption, image.ocr_text]
+        .filter(Boolean)
+        .join('\n\n') || `${image.evidence_type} from ${image.page_ref}`,
+    );
+    setObservationForm({
+      ...EMPTY_OBSERVATION_FORM,
+      observed_text: '',
+      source_image_id: image.image_id,
+      source_page_ref: image.page_ref || '',
+      source_locator: image.source_locator || '',
+      context_quote: context,
+      notes: `Image evidence: ${image.evidence_type}`,
+    });
+    setExtractedModalTab('observations');
+  };
+
   const editObservation = (observation: Observation) => {
     setObservationForm({
       observation_type: observation.observation_type || 'term',
       observed_text: observation.observed_text || '',
       source_segment_id: observation.source_segment_id ? String(observation.source_segment_id) : '',
+      source_image_id: observation.source_image_id || '',
       source_page_ref: observation.source_page_ref || '',
       source_locator: observation.source_locator || '',
       context_quote: observation.context_quote || '',
@@ -901,6 +998,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         source_segment_id: observationForm.source_segment_id
           ? Number(observationForm.source_segment_id)
           : null,
+        source_image_id: observationForm.source_image_id.trim() || null,
         source_page_ref: observationForm.source_page_ref.trim() || null,
         source_locator: observationForm.source_locator.trim() || null,
         context_quote: observationForm.context_quote.trim() || null,
@@ -989,6 +1087,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
           throw new Error(message || 'Text extraction failed.');
         }
 
+        const extractionResult = await response.json();
         await loadMaterials();
         await loadExtractedPreview(materialId);
 
@@ -997,13 +1096,32 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
           const refreshedMaterial = await detailResponse.json();
           setSelectedMaterial(refreshedMaterial);
         }
+
+        if (extractionResult.image_label_job_id) {
+          for (let attempt = 0; attempt < 120; attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            const jobResponse = await repositoryFetch(`/ai/image-index/jobs/${extractionResult.image_label_job_id}`);
+            if (!jobResponse.ok) continue;
+            const job = await jobResponse.json();
+            if (job.status === 'queued' || job.status === 'running') continue;
+            await loadExtractedPreview(materialId);
+            break;
+          }
+        }
+
+        await loadAiStatus();
       } catch (err) {
         setError(getErrorMessage(err, 'Text extraction failed.'));
       } finally {
         setExtractingMaterialId(null);
       }
     },
-    [loadExtractedPreview, loadMaterials, repositoryFetch],
+    [
+      loadAiStatus,
+      loadExtractedPreview,
+      loadMaterials,
+      repositoryFetch,
+    ],
   );
 
   const generateKeywords = useCallback(async () => {
@@ -1112,13 +1230,16 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     setError(null);
 
     try {
-      const response = await repositoryFetch('/ai/semantic-search', {
+      const response = await repositoryFetch('/ai/multimodal-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
           limit: 12,
           include_observations: true,
+          include_images: true,
+          auto_index_images: false,
+          image_index_limit: 0,
         }),
       });
 
@@ -1139,7 +1260,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   };
 
   const askCorpus = async () => {
-    const question = fullTextQuery.trim();
+    const question = activeCitedQuestion;
     if (question.length < 2) {
       setAskCorpusResult(null);
       return;
@@ -1154,12 +1275,12 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question,
-          max_results: 8,
+          max_results: 10,
         }),
       });
 
       if (!response.ok) {
-        const message = await parseErrorResponse(response, 'Cited Answer failed');
+        const message = await parseErrorResponse(response, 'Process References failed');
         throw new Error(message);
       }
 
@@ -1168,7 +1289,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       setSemanticResults(null);
       setAiEvidenceReport(null);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Cited Answer failed'));
+      setError(getErrorMessage(err, 'Process References failed'));
     } finally {
       setIsAskingCorpus(false);
     }
@@ -1234,6 +1355,18 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     }, 80);
   }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetSegmentId]);
 
+  useEffect(() => {
+    if (!isExtractedModalOpen || extractedModalTab !== 'images' || !targetImageId || !extractedPreview) return;
+
+    window.setTimeout(() => {
+      const target = imageListRef.current?.querySelector<HTMLElement>(
+        `[data-image-id="${String(targetImageId)}"]`,
+      );
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.focus({ preventScroll: true });
+    }, 80);
+  }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetImageId]);
+
   const createLinkMaterial = async () => {
     const trimmedUrl = linkForm.source_url.trim();
     if (!trimmedUrl) {
@@ -1269,68 +1402,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     }
   };
 
-  const downloadSearchReportPdf = () => {
-    if (!searchReport) return;
-
-    const resultSections = searchReport.results
-      .map((result, index) => {
-        return `
-          <section class="result">
-            <h2>${index + 1}. ${escapeHtml(result.material_title)}</h2>
-
-            <p class="meta">
-              ${escapeHtml(result.material_authors || 'Unknown author')}
-              ${result.material_year ? ` · ${escapeHtml(result.material_year)}` : ''}
-              · ${escapeHtml(result.page_ref)}
-              · ${escapeHtml(result.source_locator)}
-            </p>
-
-            <div class="badges">
-              ${(result.matched_terms || [])
-                .map((term) => `<span class="badge matched">${escapeHtml(term)}</span>`)
-                .join('')}
-              ${
-                result.all_terms_in_context
-                  ? `<span class="badge all">all terms in context</span>`
-                  : ''
-              }
-            </div>
-
-            <p><strong>Matched terms:</strong> ${escapeHtml(result.matched_terms.join(', '))}</p>
-            <p><strong>Terms in context:</strong> ${escapeHtml(result.terms_in_context.join(', '))}</p>
-            <p><strong>All terms in context:</strong> ${result.all_terms_in_context ? 'Yes' : 'No'}</p>
-
-            ${
-              result.before
-                ? `
-                  <h3>Previous paragraph</h3>
-                  <p class="context">${escapeHtml(result.before)}</p>
-                `
-                : ''
-            }
-
-            <h3>Matching paragraph</h3>
-            <p class="match">${highlightSearchTermsHtml(result.match, searchReport.query_terms)}</p>
-
-            ${
-              result.after
-                ? `
-                  <h3>Next paragraph</h3>
-                  <p class="context">$highlightSearchTermsHtml(result.after, searchReport.query_terms)</p>
-                `
-                : ''
-            }
-          </section>
-        `;
-      })
-      .join('');
-
+  const openPrintableReport = (title: string, summaryHtml: string, bodyHtml: string, footerText: string) => {
     const html = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Search Context Report</title>
+          <title>${escapeHtml(title)}</title>
           <style>
             @page {
               size: A4;
@@ -1428,6 +1506,22 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               padding: 8px 12px;
             }
 
+            .answer {
+              border-left: 4px solid #2563eb;
+              background: #eff6ff;
+              padding: 10px 12px;
+              white-space: pre-wrap;
+            }
+
+            .evidence-image {
+              max-width: 100%;
+              max-height: 360px;
+              display: block;
+              margin: 8px 0;
+              border: 1px solid #cbd5e1;
+              border-radius: 6px;
+            }
+
             .term-highlight {
               background: #fde68a !important;
               color: #0f172a !important;
@@ -1461,20 +1555,14 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         </head>
 
         <body>
-          <h1>Search Context Report</h1>
+          <h1>${escapeHtml(title)}</h1>
 
-          <div class="summary">
-            <p><strong>Query:</strong> ${escapeHtml(searchReport.query)}</p>
-            <p><strong>Terms:</strong> ${escapeHtml(searchReport.query_terms.join(', '))}</p>
-            <p><strong>Context window:</strong> ${escapeHtml(searchReport.context_window)}</p>
-            <p><strong>Total matches:</strong> ${escapeHtml(searchReport.total_matches)}</p>
-            <p><strong>Co-occurrence windows:</strong> ${escapeHtml(searchReport.cooccurrence_count)}</p>
-          </div>
+          <div class="summary">${summaryHtml}</div>
 
-          ${resultSections}
+          ${bodyHtml}
 
           <div class="footer">
-            Generated from Research Workbench search context report.
+            ${escapeHtml(footerText)}
           </div>
 
           <script>
@@ -1502,6 +1590,170 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
+  };
+
+  const downloadSearchReportPdf = () => {
+    if (!searchReport) return;
+
+    const resultSections = searchReport.results
+      .map((result, index) => {
+        return `
+          <section class="result">
+            <h2>${index + 1}. ${escapeHtml(result.material_title)}</h2>
+
+            <p class="meta">
+              ${escapeHtml(result.material_authors || 'Unknown author')}
+              ${result.material_year ? ` · ${escapeHtml(result.material_year)}` : ''}
+              · ${escapeHtml(result.page_ref)}
+              · ${escapeHtml(result.source_locator)}
+            </p>
+
+            <div class="badges">
+              ${(result.matched_terms || [])
+                .map((term) => `<span class="badge matched">${escapeHtml(term)}</span>`)
+                .join('')}
+              ${
+                result.all_terms_in_context
+                  ? `<span class="badge all">all terms in context</span>`
+                  : ''
+              }
+            </div>
+
+            <p><strong>Matched terms:</strong> ${escapeHtml(result.matched_terms.join(', '))}</p>
+            <p><strong>Terms in context:</strong> ${escapeHtml(result.terms_in_context.join(', '))}</p>
+            <p><strong>All terms in context:</strong> ${result.all_terms_in_context ? 'Yes' : 'No'}</p>
+
+            ${
+              result.before
+                ? `
+                  <h3>Previous paragraph</h3>
+                  <p class="context">${highlightSearchTermsHtml(result.before, searchReport.query_terms)}</p>
+                `
+                : ''
+            }
+
+            <h3>Matching paragraph</h3>
+            <p class="match">${highlightSearchTermsHtml(result.match, searchReport.query_terms)}</p>
+
+            ${
+              result.after
+                ? `
+                  <h3>Next paragraph</h3>
+                  <p class="context">${highlightSearchTermsHtml(result.after, searchReport.query_terms)}</p>
+                `
+                : ''
+            }
+          </section>
+        `;
+      })
+      .join('');
+
+    openPrintableReport(
+      'Search Context Report',
+      `
+        <p><strong>Query:</strong> ${escapeHtml(searchReport.query)}</p>
+        <p><strong>Terms:</strong> ${escapeHtml(searchReport.query_terms.join(', '))}</p>
+        <p><strong>Context window:</strong> ${escapeHtml(searchReport.context_window)}</p>
+        <p><strong>Total matches:</strong> ${escapeHtml(searchReport.total_matches)}</p>
+        <p><strong>Co-occurrence windows:</strong> ${escapeHtml(searchReport.cooccurrence_count)}</p>
+      `,
+      resultSections,
+      'Generated from Research Workbench search context report.',
+    );
+  };
+
+  const downloadCitedAnswerReportPdf = () => {
+    if (!askCorpusResult) return;
+
+    const passages = (askCorpusResult.retrieved_passages || [])
+      .map((passage, index) => `
+        <section class="result">
+          <h2>${index + 1}. ${escapeHtml(passage.material_title)}</h2>
+          <p class="meta">
+            ${escapeHtml(passage.material_authors || 'Unknown author')}
+            ${passage.material_year ? ` · ${escapeHtml(passage.material_year)}` : ''}
+            · ${escapeHtml(passage.page_ref)}
+            · ${escapeHtml(passage.source_locator)}
+            · ${(passage.score * 100).toFixed(1)} match
+          </p>
+          <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+          <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
+        </section>
+      `)
+      .join('');
+    const imagePassages = (askCorpusResult.image_results || [])
+      .map((image, index) => `
+        <section class="result">
+          <h2>Image ${index + 1}. ${escapeHtml(image.material_title || 'Image evidence')}</h2>
+          <p class="meta">
+            ${escapeHtml(image.page_ref)} · ${escapeHtml(image.source_locator)}
+            ${image.semantic_score ? ` · ${(image.semantic_score * 100).toFixed(1)} image-text match` : ''}
+          </p>
+          <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
+          <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
+          ${image.ocr_text ? `<h3>OCR Text</h3><p class="context">${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
+          ${image.visual_caption ? `<h3>Visual Caption</h3><p class="context">${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
+        </section>
+      `)
+      .join('');
+
+    openPrintableReport(
+      'Processed References Report',
+      `
+        <p><strong>Search seed:</strong> ${escapeHtml(fullTextQuery.trim())}</p>
+        <p><strong>Research question:</strong> ${escapeHtml(askCorpusResult.question)}</p>
+        <p><strong>Mode:</strong> Retrieval-augmented answer from cited corpus passages only.</p>
+      `,
+      `
+        <section class="result">
+          <h2>Evidence-Only Answer</h2>
+          <p class="answer">${escapeHtml(askCorpusResult.answer)}</p>
+        </section>
+        ${passages}
+        ${imagePassages}
+      `,
+      'Generated from Research Workbench Process References.',
+    );
+  };
+
+  const downloadOrganizedReferencesReportPdf = () => {
+    if (!aiEvidenceReport) return;
+
+    const themes = aiEvidenceReport.themes
+      .map((theme, index) => `
+        <section class="result">
+          <h2>${index + 1}. ${escapeHtml(theme.material_title)}</h2>
+          <p class="meta">${theme.passages.length} cited text passages · ${(theme.image_passages || []).length} image evidence items</p>
+          ${theme.passages
+            .map((passage) => `
+              <h3>${escapeHtml(passage.page_ref)} · ${(passage.score * 100).toFixed(1)} match</h3>
+              <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+              <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
+            `)
+            .join('')}
+          ${(theme.image_passages || [])
+            .map((image) => `
+              <h3>${escapeHtml(image.page_ref)} · image evidence</h3>
+              <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
+              <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
+              ${image.ocr_text ? `<p class="context"><strong>OCR:</strong> ${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
+              ${image.visual_caption ? `<p class="context"><strong>Caption:</strong> ${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
+            `)
+            .join('')}
+        </section>
+      `)
+      .join('');
+
+    openPrintableReport(
+      'Organized References Report',
+      `
+        <p><strong>Search seed:</strong> ${escapeHtml(aiEvidenceReport.query)}</p>
+        <p><strong>Groups:</strong> ${escapeHtml(aiEvidenceReport.themes.length)}</p>
+        <p><strong>Mode:</strong> Sources grouped for review; this report surfaces evidence candidates, not interpretations.</p>
+      `,
+      themes,
+      'Generated from Research Workbench organized references.',
+    );
   };
 
   const deleteSelectedMaterial = useCallback(async () => {
@@ -1541,6 +1793,11 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     return `${API_BASE_URL}/repository/materials/${materialId}/files/${fileId}`;
   };
 
+  const imageEvidenceUrl = (image: ImageEvidence) => {
+    if (image.image_url.startsWith('http')) return image.image_url;
+    return `${API_BASE_URL}${image.image_url}`;
+  };
+
   return (
     <div className="fixed inset-0 z-[80] bg-slate-950/60 backdrop-blur-sm">
       <div className="h-full w-full bg-slate-50 text-slate-900 flex flex-col">
@@ -1578,12 +1835,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100"
             >
               Add Link
-            </button>
-            <button
-              onClick={startNewMaterial}
-              className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100"
-            >
-              New Record
             </button>
           </div>
         </header>
@@ -1661,7 +1912,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     Search Corpus
                   </h4>
                   <p className="mt-1 text-xs text-slate-400">
-                    Start with exact text matches, then continue into related evidence or cited answers.
+                    Begin here with exact text matches, then continue into related references below if needed.
                   </p>
                 </div>
               </div>
@@ -1681,7 +1932,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   disabled={isSearchingText}
                   className="h-10 rounded-lg bg-slate-900 px-4 text-xs font-black uppercase tracking-wider text-white disabled:opacity-40"
                 >
-                  {isSearchingText ? 'Searching' : 'Exact Search'}
+                  {isSearchingText ? 'Searching' : 'Search'}
                 </button>
 
                 <button
@@ -1690,7 +1941,15 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   disabled={isGeneratingSearchReport || fullTextQuery.trim().length < 2}
                   className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
-                  {isGeneratingSearchReport ? 'Generating' : 'Exact Report'}
+                  {isGeneratingSearchReport ? 'Generating' : 'Report'}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearExactSearch}
+                  disabled={!fullTextQuery && searchResults.length === 0 && !searchReport}
+                  className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Clear
                 </button>
               </div>
               {searchResults.length > 0 && (
@@ -1719,7 +1978,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     Continue With Assisted Review
                   </h4>
                   <p className="mt-1 text-xs text-slate-400">
-                    Optional Ollama tools for the same query. Use related passages for discovery, or RAG answer when you need a cited synthesis.
+                    Use related references for discovery, organize references for review, or process references to investigate.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1729,15 +1988,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     disabled={!evidenceAssistantReady || isRunningSemanticSearch || fullTextQuery.trim().length < 2}
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                   >
-                    {isRunningSemanticSearch ? 'Finding' : 'Find Related Passages'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={askCorpus}
-                    disabled={!evidenceAssistantReady || isAskingCorpus || fullTextQuery.trim().length < 2}
-                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                  >
-                    {isAskingCorpus ? 'Reading' : 'Cited Answer (RAG)'}
+                    {isRunningSemanticSearch ? 'Finding' : 'Find Related References'}
                   </button>
                   <button
                     type="button"
@@ -1745,10 +1996,74 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     disabled={!evidenceAssistantReady || isGeneratingAiReport || fullTextQuery.trim().length < 2}
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                   >
-                    {isGeneratingAiReport ? 'Grouping' : 'Group Evidence'}
+                    {isGeneratingAiReport ? 'Organizing' : 'Organize References'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowProcessReferencesPanel(true)}
+                    disabled={!evidenceAssistantReady || fullTextQuery.trim().length < 2}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Process References
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAssistedSearch}
+                    disabled={!semanticResults && !askCorpusResult && !aiEvidenceReport && !citedQuestion && !showProcessReferencesPanel}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Clear
                   </button>
                 </div>
               </div>
+
+              {showProcessReferencesPanel && (
+                <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Process References Question
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowProcessReferencesPanel(false)}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400 hover:bg-slate-50"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <textarea
+                    value={citedQuestion}
+                    onChange={(event) => setCitedQuestion(event.target.value)}
+                    placeholder="Optional: ask a research question, e.g. What relationship does the corpus show between tapa cloth and beating tools?"
+                    className="repo-textarea mt-2 min-h-[72px]"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      ['Relationship', `What relationship does the corpus show between ${fullTextQuery.trim() || 'these terms'} and related words, materials, places, or processes?`],
+                      ['Compare', `How do sources differ in how they describe ${fullTextQuery.trim() || 'this topic'}?`],
+                      ['Process', `What process steps or production context does the corpus mention for ${fullTextQuery.trim() || 'this topic'}?`],
+                      ['Evidence Gap', `What is well supported, weakly supported, or not established about ${fullTextQuery.trim() || 'this topic'} in the current corpus?`],
+                    ].map(([label, prompt]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setCitedQuestion(prompt)}
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={askCorpus}
+                      disabled={!evidenceAssistantReady || isAskingCorpus || activeCitedQuestion.length < 2}
+                      className="rounded-lg bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      {isAskingCorpus ? 'Processing' : 'Process References'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {aiStatus && !aiStatus.provider_configured && (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -1786,11 +2101,59 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                       <div className="mt-1 text-[11px] text-slate-400">
                         {result.page_ref} · {result.source_locator}
                       </div>
+                      <div className="mt-1 text-[11px] font-semibold text-blue-700">
+                        {getRetrievalReason(result.content_text, activeQueryTerms, result.score)}
+                      </div>
                       <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
                         {highlightSearchTerms(cleanAnnotationText(result.content_text), activeQueryTerms)}
                       </div>
                     </button>
                   ))}
+                  {(semanticResults.image_results || []).length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Image Evidence
+                      </div>
+                      {(semanticResults.image_results || []).slice(0, 6).map((image) => (
+                        <button
+                          key={image.image_id}
+                          type="button"
+                          onClick={() => openAnnotationWorkspace(image.material_id, 'images', null, image.image_id)}
+                          className="grid w-full gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 text-left hover:bg-blue-50 sm:grid-cols-[120px_1fr]"
+                        >
+                          <img
+                            src={imageEvidenceUrl(image)}
+                            alt={image.visual_caption || image.page_ref}
+                            className="h-24 w-full rounded-md border border-slate-200 object-cover"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="truncate text-sm font-black text-slate-800">
+                                {image.material_title || 'Image evidence'}
+                              </div>
+                              <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                {image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)} image match` : image.evidence_type}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              {image.page_ref} · {image.source_locator}
+                            </div>
+                            <div className="mt-1 text-[11px] font-semibold text-blue-700">
+                              {image.retrieval_basis}
+                            </div>
+                            <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                              {highlightSearchTerms(cleanAnnotationText(image.ocr_text || image.visual_caption || ''), activeQueryTerms)}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {(semanticResults.image_results || []).length === 0 && (aiStatus?.image_evidence_count || 0) > 0 && (
+                    <div className="rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+                      No image evidence matched yet. Prepare image labels, or add image observations such as visible terms, motifs, tools, places, materials, or processes.
+                    </div>
+                  )}
                   {semanticResults.related_observations.length > 0 && (
                     <div className="rounded-lg border border-slate-100 bg-white p-3">
                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
@@ -1813,11 +2176,20 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
               {askCorpusResult && (
                 <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-4">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    Cited Answer (RAG)
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Processed References
+                    </div>
+                    <button
+                      type="button"
+                      onClick={downloadCitedAnswerReportPdf}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                    >
+                      Download Report
+                    </button>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    Retrieval-augmented answer from cited passages only. Use this for synthesis after checking the source hits.
+                    Retrieval-augmented answer from cited passages only. Use it for definitions, relationships, comparisons, process questions, and evidence gaps.
                   </p>
                   <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
                     {askCorpusResult.answer}
@@ -1848,8 +2220,17 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
               {aiEvidenceReport && (
                 <div className="mt-3 space-y-3">
-                  <div className="text-xs text-slate-500">
-                    {aiEvidenceReport.evidence_note}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-slate-500">
+                      {aiEvidenceReport.evidence_note}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={downloadOrganizedReferencesReportPdf}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                    >
+                      Download Report
+                    </button>
                   </div>
                   {aiEvidenceReport.themes.map((theme) => (
                     <div key={theme.material_id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
@@ -1865,7 +2246,33 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                             <div className="mb-1 font-bold text-slate-400">
                               {passage.page_ref} · {(passage.score * 100).toFixed(1)} match
                             </div>
+                            <div className="mb-2 font-semibold text-blue-700">
+                              {getRetrievalReason(passage.content_text, activeQueryTerms, passage.score)}
+                            </div>
                             {highlightSearchTerms(truncateText(cleanAnnotationText(passage.content_text), 320), activeQueryTerms)}
+                          </button>
+                        ))}
+                        {(theme.image_passages || []).slice(0, 3).map((image) => (
+                          <button
+                            key={image.image_id}
+                            type="button"
+                            onClick={() => openAnnotationWorkspace(image.material_id, 'images', null, image.image_id)}
+                            className="grid w-full gap-3 rounded-lg bg-white p-3 text-left text-xs leading-relaxed text-slate-600 hover:bg-blue-50 sm:grid-cols-[96px_1fr]"
+                          >
+                            <img
+                              src={imageEvidenceUrl(image)}
+                              alt={image.visual_caption || image.page_ref}
+                              className="h-20 w-full rounded-md border border-slate-200 object-cover"
+                            />
+                            <div>
+                              <div className="mb-1 font-bold text-slate-400">
+                                {image.page_ref} · image evidence
+                              </div>
+                              <div className="mb-2 font-semibold text-blue-700">
+                                {image.retrieval_basis}
+                              </div>
+                              {highlightSearchTerms(truncateText(cleanAnnotationText(image.ocr_text || image.visual_caption || ''), 240), activeQueryTerms)}
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -1879,12 +2286,12 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               <table className="w-full table-fixed text-left">
                 <thead className="bg-slate-100 text-[10px] uppercase tracking-widest text-slate-500">
                   <tr>
-                    <th className="w-[30%] px-4 py-3">Title</th>
-                    <th className="w-[15%] px-4 py-3">Source</th>
-                    <th className="w-[12%] px-4 py-3">Status</th>
-                    <th className="w-[14%] px-4 py-3">Extraction</th>
-                    <th className="w-[12%] px-4 py-3">Observed</th>
-                    <th className="w-[17%] px-4 py-3">Actions</th>
+                    <th className="w-[28%] px-4 py-3">Title</th>
+                    <th className="w-[13%] px-4 py-3">Source</th>
+                    <th className="w-[14%] px-4 py-3">Status</th>
+                    <th className="w-[16%] px-4 py-3">Extraction</th>
+                    <th className="w-[11%] px-4 py-3">Observed</th>
+                    <th className="w-[18%] px-4 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1972,7 +2379,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                             disabled={(material.segment_count ?? 0) === 0}
                             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            Text
+                            Content
                           </button>
                           <button
                             type="button"
@@ -1982,7 +2389,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                             }}
                             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
                           >
-                            Observe
+                            Annotate
                           </button>
                         </div>
                         <div className="mt-2 text-[11px] text-slate-400">
@@ -2312,6 +2719,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               <div className="flex gap-2">
                 {[
                   ['segments', `Text (${extractedPreview?.segments?.length ?? 0})`],
+                  ['images', `Images (${extractedPreview?.images?.length ?? 0})`],
                   ['links', `Links (${extractedPreview?.discovered_links?.length ?? 0})`],
                   ['observations', `Observations (${observations.length})`],
                   ['runs', `Runs (${extractedPreview?.runs?.length ?? 0})`],
@@ -2319,7 +2727,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   <button
                     key={tab}
                     type="button"
-                    onClick={() => setExtractedModalTab(tab as 'segments' | 'links' | 'observations' | 'runs')}
+                    onClick={() => setExtractedModalTab(tab as 'segments' | 'images' | 'links' | 'observations' | 'runs')}
                     className={`rounded-t-lg px-4 py-2 text-[10px] font-black uppercase tracking-wider ${
                       extractedModalTab === tab
                         ? 'bg-slate-900 text-white'
@@ -2380,6 +2788,71 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                           >
                             Mark Observation
                           </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {extractedPreview && extractedModalTab === 'images' && (
+                <div ref={imageListRef} className="space-y-4">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">
+                    Image evidence is stored separately from text. Captions describe visible content and should be reviewed as metadata, not interpretation.
+                  </div>
+                  {(extractedPreview.images || []).length === 0 && (
+                    <p className="text-sm text-slate-400">No image evidence extracted yet.</p>
+                  )}
+                  {(extractedPreview.images || []).map((image) => {
+                    const isTargetImage = image.image_id === targetImageId;
+                    return (
+                      <div
+                        key={image.image_id}
+                        data-image-id={image.image_id}
+                        tabIndex={-1}
+                        className={`grid gap-4 rounded-lg border p-4 outline-none transition lg:grid-cols-[220px_1fr] ${
+                          isTargetImage
+                            ? 'border-blue-300 bg-blue-50 shadow-sm ring-2 ring-blue-100'
+                            : 'border-slate-100 bg-white'
+                        }`}
+                      >
+                        <img
+                          src={imageEvidenceUrl(image)}
+                          alt={image.visual_caption || image.page_ref}
+                          className="max-h-64 w-full rounded-lg border border-slate-200 object-contain bg-white"
+                        />
+                        <div>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            {image.page_ref}{isTargetImage ? ' · cited image' : ''}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-400">
+                            {image.evidence_type} · {image.source_locator} · {image.width || 0} x {image.height || 0}
+                          </div>
+                          {image.ocr_text && (
+                            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">OCR Text</div>
+                              <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                                {highlightSearchTerms(image.ocr_text, activeQueryTerms)}
+                              </p>
+                            </div>
+                          )}
+                          {image.visual_caption && (
+                            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vision Caption</div>
+                              <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                                {highlightSearchTerms(image.visual_caption, activeQueryTerms)}
+                              </p>
+                            </div>
+                          )}
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => startObservationFromImage(image)}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                            >
+                              Mark Image Observation
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -2486,6 +2959,12 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                         />
                       </Field>
 
+                      {observationForm.source_image_id && (
+                        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                          Linked to image evidence {observationForm.source_image_id.slice(0, 8)}
+                        </div>
+                      )}
+
                       <Field label="Context Quote">
                         <textarea
                           value={observationForm.context_quote}
@@ -2566,6 +3045,11 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                                 Observation
                               </span>
+                              {observation.source_image_id && (
+                                <span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
+                                  Image Source
+                                </span>
+                              )}
                             </div>
                             <div className="mt-2 text-sm font-black text-slate-800">
                               {observation.observed_text}
@@ -2633,70 +3117,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {isPreparingReportPrint && searchReport && (
-        <div className="search-report-print">
-          <h1>Search Context Report</h1>
-
-          <div className="print-summary">
-            <p><strong>Query:</strong> {searchReport.query}</p>
-            <p><strong>Terms:</strong> {searchReport.query_terms.join(', ')}</p>
-            <p><strong>Context window:</strong> {searchReport.context_window}</p>
-            <p><strong>Total matches:</strong> {searchReport.total_matches}</p>
-            <p><strong>Co-occurrence windows:</strong> {searchReport.cooccurrence_count}</p>
-          </div>
-
-          {searchReport.results.map((result, index) => (
-            <section
-              key={`${result.segment_id}-${result.paragraph_index}-${index}`}
-              className="print-result"
-            >
-              <h2>
-                {index + 1}. {result.material_title}
-              </h2>
-
-              <p className="print-meta">
-                {result.material_authors || 'Unknown author'}
-                {result.material_year ? ` · ${result.material_year}` : ''}
-                {' · '}
-                {result.page_ref}
-                {' · '}
-                {result.source_locator}
-              </p>
-
-              <p>
-                <strong>Matched terms:</strong> {result.matched_terms.join(', ')}
-              </p>
-
-              <p>
-                <strong>Terms in context:</strong> {result.terms_in_context.join(', ')}
-              </p>
-
-              <p>
-                <strong>All terms in context:</strong>{' '}
-                {result.all_terms_in_context ? 'Yes' : 'No'}
-              </p>
-
-              {result.before && (
-                <>
-                  <h3>Previous paragraph</h3>
-                  <p>{result.before}</p>
-                </>
-              )}
-
-              <h3>Matching paragraph</h3>
-              <p className="print-match">{result.match}</p>
-
-              {result.after && (
-                <>
-                  <h3>Next paragraph</h3>
-                  <p>{result.after}</p>
-                </>
-              )}
-            </section>
-          ))}
         </div>
       )}
 
