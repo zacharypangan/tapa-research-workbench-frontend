@@ -5,13 +5,14 @@ export function buildPrintableReportHtml(
   summaryHtml: string,
   bodyHtml: string,
   footerText: string,
+  documentTitle = title,
 ) {
   return `
     <!doctype html>
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>${escapeHtml(title)}</title>
+        <title>${escapeHtml(documentTitle)}</title>
         <style>
           @page {
             size: A4;

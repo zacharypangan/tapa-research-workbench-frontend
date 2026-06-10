@@ -8,7 +8,8 @@ import type { SearchReport } from './types';
 interface SearchReportModalProps {
   searchReport: SearchReport;
   onClose: () => void;
-  onDownload: () => void;
+  onDownloadPdf: () => void;
+  onDownloadCsv: () => void;
   onSelectMaterial: (materialId: string) => void;
 }
 
@@ -17,7 +18,8 @@ const WORDLIST_HEADERS = ['language_name', 'concept', 'concept_group', 'form', '
 export function SearchReportModal({
   searchReport,
   onClose,
-  onDownload,
+  onDownloadPdf,
+  onDownloadCsv,
   onSelectMaterial,
 }: SearchReportModalProps) {
   return (
@@ -36,13 +38,27 @@ export function SearchReportModal({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onDownload}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-            >
-              Download PDF
-            </button>
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50">
+                Download
+              </summary>
+              <div className="absolute right-0 z-10 mt-2 w-36 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={onDownloadPdf}
+                  className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                >
+                  PDF File
+                </button>
+                <button
+                  type="button"
+                  onClick={onDownloadCsv}
+                  className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                >
+                  CSV File
+                </button>
+              </div>
+            </details>
 
             <button
               type="button"

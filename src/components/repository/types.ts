@@ -43,6 +43,11 @@ export interface Material {
 
 export interface RepositoryWorkbenchProps {
   onClose: () => void;
+  onOpenTutorial?: () => void;
+  activeTutorialTarget?: string | null;
+  onTutorialAction?: (target: string) => void;
+  initialFocus?: 'search';
+  focusSignal?: number;
 }
 
 export interface ExtractedPreview {
