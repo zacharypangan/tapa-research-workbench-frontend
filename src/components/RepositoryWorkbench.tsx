@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { API_BASE_URL } from '../config';
 import {
   EMPTY_FORM,
-  EMPTY_LINK_FORM,
   EMPTY_OBSERVATION_FORM,
   EXTRACTION_STATUS_LABELS,
   OBSERVATION_TYPE_LABELS,
@@ -49,7 +48,7 @@ import type {
   SemanticSearchResponse,
 } from './repository/types';
 
-export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProps) {
+export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -62,9 +61,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [isCreating, setIsCreating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isCreatingLink, setIsCreatingLink] = useState(false);
-  const [showLinkModal, setShowLinkModal] = useState(false);
-  const [linkForm, setLinkForm] = useState(EMPTY_LINK_FORM);
   const [repositoryApiAvailable, setRepositoryApiAvailable] = useState(true);
   const [extractedPreview, setExtractedPreview] = useState<ExtractedPreview | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
@@ -82,6 +78,8 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [searchReport, setSearchReport] = useState<SearchReport | null>(null);
   const [showSearchReportModal, setShowSearchReportModal] = useState(false);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [localAiStatus, setLocalAiStatus] = useState<'idle' | 'checking' | 'ready' | 'missing' | 'not-running' | 'blocked'>('idle');
+  const [showLocalAiSetupActions, setShowLocalAiSetupActions] = useState(false);
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
@@ -94,6 +92,26 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   const [error, setError] = useState<string | null>(null);
   const segmentListRef = useRef<HTMLDivElement | null>(null);
   const imageListRef = useRef<HTMLDivElement | null>(null);
+  const corpusSearchRef = useRef<HTMLInputElement | null>(null);
+
+  const tutorialTargetClass = (target: string) =>
+    activeTutorialTarget === target ? 'tutorial-target-pulse tutorial-target-active' : '';
+
+  const notifyTutorialAction = (target: string) => {
+    if (activeTutorialTarget === target) onTutorialAction?.(target);
+  };
+
+  useEffect(() => {
+    if (!activeTutorialTarget) return;
+    const target = document.querySelector(`[data-tutorial-target="${activeTutorialTarget}"]`);
+    target?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  }, [activeTutorialTarget]);
+
+  useEffect(() => {
+    if (initialFocus === 'search') {
+      window.setTimeout(() => corpusSearchRef.current?.focus(), 60);
+    }
+  }, [initialFocus, focusSignal]);
 
   const buildRepositoryUrls = useCallback((path: string) => {
     return [`${API_BASE_URL}/repository${path}`, `${API_BASE_URL}${path}`];
@@ -148,7 +166,36 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     ).length;
   }, [observations]);
 
-  const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
+  const checkLocalAi = useCallback(async () => {
+    setLocalAiStatus('checking');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 3500);
+    try {
+      const response = await fetch('http://localhost:11434/api/tags', { signal: controller.signal });
+      if (!response.ok) {
+        setLocalAiStatus('not-running');
+        return;
+      }
+      const data = await response.json();
+      const names = (data.models || []).map((model: { name?: string }) => String(model.name || '').toLowerCase());
+      const hasModel = (model: string) => names.some((name: string) => name === model || name.startsWith(`${model}:`));
+      setLocalAiStatus(hasModel('nomic-embed-text') && hasModel('llama3.1') && hasModel('llava') ? 'ready' : 'missing');
+    } catch {
+      setLocalAiStatus('blocked');
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
+  const evidenceAssistantReady = localAiStatus === 'ready';
+  const localAiMessage = {
+    idle: 'Start Local model to use Assisted Review.',
+    checking: 'Checking Local model...',
+    ready: 'Local model is ready.',
+    missing: 'Local model setup is incomplete. Please run the setup script again.',
+    'not-running': 'Local model is not running.',
+    blocked: 'The browser could not connect to Local model. Please run the setup script again and allow local access if asked.',
+  }[localAiStatus];
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -262,7 +309,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     setIsSaving(true);
     setError(null);
     try {
-      const payload = compactPayload(form);
+      const payload = compactPayload({
+        ...form,
+        title: form.title.trim() || form.source_url.trim(),
+      });
       const response = await repositoryFetch(
         isCreating
           ? '/materials'
@@ -402,7 +452,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     );
     setObservationForm({
       ...EMPTY_OBSERVATION_FORM,
-      observed_text: '',
+      observed_text: `Image evidence${image.page_ref ? ` ${image.page_ref}` : ''}`,
       source_image_id: image.image_id,
       source_page_ref: image.page_ref || '',
       source_locator: image.source_locator || '',
@@ -430,7 +480,12 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
   const saveObservation = async () => {
     if (!selectedMaterial?.id) return;
-    if (!observationForm.observed_text.trim()) {
+    const isImageObservation = Boolean(observationForm.source_image_id.trim());
+    const observedText = isImageObservation
+      ? observationForm.observed_text.trim() || `Image evidence${observationForm.source_page_ref ? ` ${observationForm.source_page_ref}` : ''}`
+      : observationForm.observed_text.trim();
+
+    if (!observedText) {
       setError('Observed text is required.');
       return;
     }
@@ -441,7 +496,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     try {
       const payload = {
         observation_type: observationForm.observation_type,
-        observed_text: observationForm.observed_text.trim(),
+        observed_text: observedText,
         source_segment_id: observationForm.source_segment_id
           ? Number(observationForm.source_segment_id)
           : null,
@@ -814,43 +869,14 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     }, 80);
   }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetImageId]);
 
-  const createLinkMaterial = async () => {
-    const trimmedUrl = linkForm.source_url.trim();
-    if (!trimmedUrl) {
-      setError('Source URL is required for link material.');
-      return;
-    }
-    setIsCreatingLink(true);
-    setError(null);
-    try {
-      const response = await repositoryFetch('/materials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: linkForm.title.trim() || trimmedUrl,
-          source_url: trimmedUrl,
-          source_type: linkForm.source_type,
-          status: 'needs_metadata',
-        }),
-      });
-      if (!response.ok) {
-        const message = await parseErrorResponse(response, 'Failed to add link material');
-        throw new Error(message);
-      }
-      const material = await response.json();
-      await loadMaterials();
-      setSelectedId(material.id);
-      setShowLinkModal(false);
-      setLinkForm(EMPTY_LINK_FORM);
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to add link material'));
-    } finally {
-      setIsCreatingLink(false);
-    }
-  };
-
-  const openPrintableReport = (title: string, summaryHtml: string, bodyHtml: string, footerText: string) => {
-    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText);
+  const openPrintableReport = (
+    title: string,
+    summaryHtml: string,
+    bodyHtml: string,
+    footerText: string,
+    documentTitle = title,
+  ) => {
+    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText, documentTitle);
 
     const printWindow = window.open('', '_blank', 'width=900,height=700');
 
@@ -862,6 +888,67 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
+  };
+
+  const printHiddenReport = (
+    title: string,
+    summaryHtml: string,
+    bodyHtml: string,
+    footerText: string,
+    documentTitle = title,
+  ) => {
+    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText, documentTitle);
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.style.opacity = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+
+    document.body.appendChild(iframe);
+    const iframeDocument = iframe.contentDocument || iframe.contentWindow?.document;
+
+    if (!iframeDocument) {
+      iframe.remove();
+      setError('Could not prepare the PDF report. Please try again.');
+      return;
+    }
+
+    iframeDocument.open();
+    iframeDocument.write(html);
+    iframeDocument.close();
+    window.setTimeout(() => iframe.remove(), 30000);
+  };
+
+  const escapeCsvCell = (value: unknown) => {
+    const text = value == null ? '' : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const downloadCsvFile = (filename: string, rows: Array<Array<unknown>>) => {
+    const csv = rows.map((row) => row.map(escapeCsvCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const buildReportFilename = (query: string, suffix: 'corpusSearch' | 'assistedSearch') => {
+    const token = query
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60) || 'research_workbench';
+    return `${token}_${suffix}`;
   };
 
   const downloadSearchReportPdf = () => {
@@ -933,7 +1020,43 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       `,
       resultSections,
       'Generated from Research Workbench search context report.',
+      `${buildReportFilename(searchReport.query, 'corpusSearch')}.pdf`,
     );
+  };
+
+  const downloadSearchReportCsv = () => {
+    if (!searchReport) return;
+
+    downloadCsvFile(`${buildReportFilename(searchReport.query, 'corpusSearch')}.csv`, [
+      [
+        'query',
+        'result_number',
+        'material_title',
+        'material_authors',
+        'material_year',
+        'page_ref',
+        'source_locator',
+        'matched_terms',
+        'research_relevance',
+        'evidence_type',
+        'matching_paragraph',
+        'context',
+      ],
+      ...searchReport.results.map((result, index) => [
+        searchReport.query,
+        index + 1,
+        result.material_title,
+        result.material_authors || '',
+        result.material_year || '',
+        result.page_ref,
+        result.source_locator,
+        result.matched_terms.join('; '),
+        result.research_relevance || '',
+        result.evidence_type || '',
+        result.match,
+        result.context_text,
+      ]),
+    ]);
   };
 
   const downloadCitedAnswerReportPdf = () => {
@@ -975,7 +1098,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       `)
       .join('');
 
-    openPrintableReport(
+    printHiddenReport(
       'Processed References Report',
       `
         <p><strong>Search seed:</strong> ${escapeHtml(fullTextQuery.trim())}</p>
@@ -991,7 +1114,52 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         ${imagePassages}
       `,
       'Generated from Research Workbench Process References.',
+      `${buildReportFilename(activeCitedQuestion, 'assistedSearch')}.pdf`,
     );
+  };
+
+  const downloadCitedAnswerReportCsv = () => {
+    if (!askCorpusResult) return;
+
+    const query = activeCitedQuestion;
+    const textRows = (askCorpusResult.retrieved_passages || []).map((passage, index) => [
+      query,
+      'text',
+      index + 1,
+      passage.material_title,
+      passage.material_authors || '',
+      passage.material_year || '',
+      passage.page_ref,
+      passage.source_locator,
+      `${(passage.score * 100).toFixed(1)}%`,
+      passage.research_relevance || '',
+      passage.evidence_type || '',
+      getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+      cleanAnnotationText(passage.content_text),
+    ]);
+
+    const imageRows = (askCorpusResult.image_results || []).map((image, index) => [
+      query,
+      'image',
+      textRows.length + index + 1,
+      image.material_title || 'Image evidence',
+      image.material_authors || '',
+      image.material_year || '',
+      image.page_ref,
+      image.source_locator,
+      image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)}%` : '',
+      image.research_relevance || '',
+      image.evidence_type || '',
+      image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.',
+      cleanAnnotationText([image.ocr_text, image.visual_caption].filter(Boolean).join('\n\n')),
+    ]);
+
+    downloadCsvFile(`${buildReportFilename(query, 'assistedSearch')}.csv`, [
+      ['query', 'source_type', 'result_number', 'material_title', 'material_authors', 'material_year', 'page_ref', 'source_locator', 'match_score', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
+      ['answer', '', '', '', '', '', '', '', '', '', '', '', askCorpusResult.answer],
+      ...textRows,
+      ...imageRows,
+    ]);
   };
 
   const downloadOrganizedReferencesReportPdf = () => {
@@ -1029,7 +1197,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       `)
       .join('');
 
-    openPrintableReport(
+    printHiddenReport(
       'Organized References Report',
       `
         <p><strong>Search seed:</strong> ${escapeHtml(aiEvidenceReport.query)}</p>
@@ -1038,7 +1206,48 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       `,
       themes,
       'Generated from Research Workbench organized references.',
+      `${buildReportFilename(aiEvidenceReport.query, 'assistedSearch')}.pdf`,
     );
+  };
+
+  const downloadOrganizedReferencesReportCsv = () => {
+    if (!aiEvidenceReport) return;
+
+    const rows = aiEvidenceReport.themes.flatMap((theme, themeIndex) => [
+      ...theme.passages.map((passage, passageIndex) => [
+        aiEvidenceReport.query,
+        themeIndex + 1,
+        theme.material_title,
+        'text',
+        passageIndex + 1,
+        passage.page_ref,
+        '',
+        `${(passage.score * 100).toFixed(1)}%`,
+        passage.research_relevance || '',
+        passage.evidence_type || '',
+        getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+        cleanAnnotationText(passage.content_text),
+      ]),
+      ...(theme.image_passages || []).map((image, imageIndex) => [
+        aiEvidenceReport.query,
+        themeIndex + 1,
+        theme.material_title,
+        'image',
+        theme.passages.length + imageIndex + 1,
+        image.page_ref,
+        image.source_locator,
+        image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)}%` : '',
+        image.research_relevance || '',
+        image.evidence_type || '',
+        image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.',
+        cleanAnnotationText([image.ocr_text, image.visual_caption].filter(Boolean).join('\n\n')),
+      ]),
+    ]);
+
+    downloadCsvFile(`${buildReportFilename(aiEvidenceReport.query, 'assistedSearch')}.csv`, [
+      ['query', 'group_number', 'material_title', 'source_type', 'result_number', 'page_ref', 'source_locator', 'match_score', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
+      ...rows,
+    ]);
   };
 
   const deleteSelectedMaterial = useCallback(async () => {
@@ -1085,7 +1294,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-950/60 backdrop-blur-sm">
-      <div className="h-full w-full bg-slate-50 text-slate-900 flex flex-col">
+      <div
+        data-tutorial-target="workbench"
+        className={`relative h-full w-full bg-slate-50 text-slate-900 flex flex-col ${tutorialTargetClass('workbench')}`}
+      >
+        {activeTutorialTarget && activeTutorialTarget !== 'workbench' && (
+          <div className="pointer-events-none fixed inset-0 z-[20] bg-slate-950/45" aria-hidden="true" />
+        )}
         <header className="h-16 shrink-0 border-b border-slate-200 bg-white px-5 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
@@ -1102,7 +1317,20 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <label className="h-10 px-4 rounded-lg bg-blue-600 text-white text-xs font-black uppercase tracking-wider hover:bg-blue-700 flex items-center gap-2 cursor-pointer">
+            {onOpenTutorial && (
+              <button
+                type="button"
+                onClick={onOpenTutorial}
+                className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100"
+                title="Open workbench walkthrough"
+              >
+                Help
+              </button>
+            )}
+            <label
+              data-tutorial-target="upload"
+              className={`h-10 px-4 rounded-lg bg-blue-600 text-white text-xs font-black uppercase tracking-wider hover:bg-blue-700 flex items-center gap-2 cursor-pointer ${tutorialTargetClass('upload')}`}
+            >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
               </svg>
@@ -1115,12 +1343,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                 onChange={(event) => uploadFiles(event.target.files)}
               />
             </label>
-            <button
-              onClick={() => setShowLinkModal(true)}
-              className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100"
-            >
-              Add Link
-            </button>
           </div>
         </header>
 
@@ -1131,7 +1353,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         )}
         {!repositoryApiAvailable && (
           <div className="mx-5 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Repository endpoints are not available on the current `VITE_API_BASE_URL`. Upload and Add Link require a backend with `/repository` routes.
+            Repository endpoints are not available on the current `VITE_API_BASE_URL`. Upload, source URLs, and extraction require a backend with `/repository` routes.
           </div>
         )}
 
@@ -1190,7 +1412,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                 </p>
               </div>
             </div>
-            <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div
+              data-tutorial-target="exact-search"
+              className={`mb-3 rounded-xl border border-slate-200 bg-white p-3 ${tutorialTargetClass('exact-search')}`}
+            >
               <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -1203,6 +1428,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               </div>
               <div className="flex items-center gap-2">
                 <input
+                  ref={corpusSearchRef}
                   value={fullTextQuery}
                   onChange={(event) => setFullTextQuery(event.target.value)}
                   onKeyDown={(event) => {
@@ -1213,7 +1439,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                 />
                 <button
                   type="button"
-                  onClick={runFullTextSearch}
+                  onClick={() => {
+                    runFullTextSearch();
+                    notifyTutorialAction('exact-search');
+                  }}
                   disabled={isSearchingText}
                   className="h-10 rounded-lg bg-slate-900 px-4 text-xs font-black uppercase tracking-wider text-white disabled:opacity-40"
                 >
@@ -1226,7 +1455,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   disabled={isGeneratingSearchReport || fullTextQuery.trim().length < 2}
                   className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
-                  {isGeneratingSearchReport ? 'Generating' : 'Report'}
+                  {isGeneratingSearchReport ? 'Preparing' : 'Download'}
                 </button>
                 <button
                   type="button"
@@ -1256,7 +1485,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               )}
             </div>
 
-            <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div
+              data-tutorial-target="assisted-review"
+              className={`mb-3 rounded-xl border border-slate-200 bg-white p-3 ${tutorialTargetClass('assisted-review')} ${tutorialTargetClass('ai-setup')}`}
+            >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -1300,6 +1532,67 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     Clear
                   </button>
                 </div>
+              </div>
+
+              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+                localAiStatus === 'ready'
+                  ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700'
+                  : 'border-slate-200 bg-slate-50 text-slate-500'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold">{localAiMessage}</div>
+                    {localAiStatus !== 'ready' && (
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        Setup options are hidden until someone chooses to prepare this computer for local models.
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowLocalAiSetupActions((value) => !value)}
+                    className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wider hover:bg-slate-50 ${
+                      localAiStatus === 'ready'
+                        ? 'border-emerald-100 bg-white/60 text-emerald-600'
+                        : 'border-slate-200 bg-white text-slate-600'
+                    }`}
+                  >
+                    {showLocalAiSetupActions ? 'Hide Setup' : localAiStatus === 'ready' ? 'Setup' : 'Setup Options'}
+                  </button>
+                </div>
+                {showLocalAiSetupActions && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <a
+                      href="/local-ai/setup-local-ai.command"
+                      download
+                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                    >
+                      Download for macOS
+                    </a>
+                    <a
+                      href="/local-ai/setup-local-ai.bat"
+                      download
+                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                    >
+                      Download for Windows
+                    </a>
+                    <a
+                      href="/local-ai/README.txt"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                    >
+                      Read setup instructions
+                    </a>
+                    <button
+                      type="button"
+                      onClick={checkLocalAi}
+                      className="rounded-lg bg-slate-900 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-slate-700"
+                    >
+                      {localAiStatus === 'checking' ? 'Checking' : 'Check Local AI'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {showProcessReferencesPanel && (
@@ -1465,13 +1758,27 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                       Processed References
                     </div>
-                    <button
-                      type="button"
-                      onClick={downloadCitedAnswerReportPdf}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
-                    >
-                      Download Report
-                    </button>
+                    <details className="relative">
+                      <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50">
+                        Download
+                      </summary>
+                      <div className="absolute right-0 z-10 mt-2 w-36 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={downloadCitedAnswerReportPdf}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                        >
+                          PDF File
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadCitedAnswerReportCsv}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                        >
+                          CSV File
+                        </button>
+                      </div>
+                    </details>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
                     Retrieval-augmented answer from cited passages only. Use it for definitions, relationships, comparisons, process questions, and evidence gaps.
@@ -1509,13 +1816,27 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                     <div className="text-xs text-slate-500">
                       {aiEvidenceReport.evidence_note}
                     </div>
-                    <button
-                      type="button"
-                      onClick={downloadOrganizedReferencesReportPdf}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
-                    >
-                      Download Report
-                    </button>
+                    <details className="relative">
+                      <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50">
+                        Download
+                      </summary>
+                      <div className="absolute right-0 z-10 mt-2 w-36 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={downloadOrganizedReferencesReportPdf}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                        >
+                          PDF File
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadOrganizedReferencesReportCsv}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                        >
+                          CSV File
+                        </button>
+                      </div>
+                    </details>
                   </div>
                   {aiEvidenceReport.themes.map((theme) => (
                     <div key={theme.material_id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
@@ -1709,25 +2030,17 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                       <td className="px-4 py-4 align-top">
                         <div className="flex flex-wrap gap-2">
                           <button
+                            data-tutorial-target="content-button"
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
                               openAnnotationWorkspace(material.id, 'segments');
+                              notifyTutorialAction('content-button');
                             }}
                             disabled={(material.segment_count ?? 0) === 0}
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            className={`rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 ${tutorialTargetClass('content-button')}`}
                           >
                             Content
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openAnnotationWorkspace(material.id, 'observations');
-                            }}
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
-                          >
-                            Annotate
                           </button>
                         </div>
                         <div className="mt-2 text-[11px] text-slate-400">
@@ -1749,7 +2062,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
             </div>
           </section>
 
-          <aside className="min-h-0 border-l border-slate-200 bg-white overflow-auto">
+          <aside
+            data-tutorial-target="metadata"
+            className={`min-h-0 border-l border-slate-200 bg-white overflow-auto ${tutorialTargetClass('metadata')}`}
+          >
             <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-5 py-4">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -1772,26 +2088,30 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                       </button>
 
                       <button
+                        data-tutorial-target="extraction"
                         type="button"
-                        onClick={() => extractMaterialText(selectedMaterial.id, false)}
+                        onClick={() => {
+                          if (
+                            extractingMaterialId === selectedMaterial.id ||
+                            ((selectedMaterial.files || []).length === 0 && !selectedMaterial.source_url)
+                          ) {
+                            return;
+                          }
+                          extractMaterialText(selectedMaterial.id, (selectedMaterial.segment_count ?? 0) > 0);
+                        }}
                         disabled={
-                          extractingMaterialId === selectedMaterial.id ||
-                          (selectedMaterial.segment_count ?? 0) > 0
+                          activeTutorialTarget !== 'extraction' &&
+                          (
+                            extractingMaterialId === selectedMaterial.id ||
+                            ((selectedMaterial.files || []).length === 0 && !selectedMaterial.source_url)
+                          )
                         }
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Extract text from files and links for this material"
+                        className={`h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 ${
+                          activeTutorialTarget === 'extraction' ? '' : 'disabled:opacity-40'
+                        } ${tutorialTargetClass('extraction')}`}
+                        title="Extract or refresh text from attached files or the saved source URL"
                       >
                         {extractingMaterialId === selectedMaterial.id ? 'Extracting' : 'Extract'}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => extractMaterialText(selectedMaterial.id, true)}
-                        disabled={extractingMaterialId === selectedMaterial.id}
-                        className="h-9 rounded-lg border border-amber-200 bg-amber-50 px-3 text-[10px] font-black uppercase tracking-wider text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Clear existing extracted text and extract again"
-                      >
-                        Re-extract
                       </button>
                     </>
                   )}
@@ -1953,21 +2273,21 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   </div>
 
                   <div className="space-y-3 p-4">
-                    <div className="grid grid-cols-4 gap-2 text-[11px]">
+                      <div className="grid gap-2 text-[12px] grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))]">
                       <div className="rounded-lg bg-slate-50 px-2 py-2">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Segments</div>
+                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Text Segments</div>
                         <div className="text-sm font-black text-slate-700">{extractedPreview?.segments?.length ?? 0}</div>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-2">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Images</div>
+                        <div className="text-sm font-black text-slate-700">{extractedPreview?.images?.length ?? 0}</div>
                       </div>
                       <div className="rounded-lg bg-slate-50 px-2 py-2">
                         <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Links</div>
                         <div className="text-sm font-black text-slate-700">{extractedPreview?.discovered_links?.length ?? 0}</div>
                       </div>
                       <div className="rounded-lg bg-slate-50 px-2 py-2">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Runs</div>
-                        <div className="text-sm font-black text-slate-700">{extractedPreview?.runs?.length ?? 0}</div>
-                      </div>
-                      <div className="rounded-lg bg-slate-50 px-2 py-2">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Observed</div>
+                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Observations</div>
                         <div className="text-sm font-black text-slate-700">{observations.length}</div>
                       </div>
                     </div>
@@ -2005,23 +2325,27 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
                     {(selectedMaterial.segment_count ?? 0) > 0 && (
                       <p className="text-xs text-slate-400">
-                        This material already has extracted text. Use Re-extract in the header to refresh it.
+                        This material already has extracted text. Use Extract in the header to refresh it.
                       </p>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        openAnnotationWorkspace(
-                          selectedMaterial.id,
-                          observations.length > 0 ? 'observations' : 'segments',
-                        );
-                      }}
-                      disabled={!extractedPreview}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      View Text / Links / Observations
-                    </button>
+                      <button
+                        data-tutorial-target="extraction"
+                        type="button"
+                        onClick={() => {
+                          if (!extractedPreview) return;
+                          openAnnotationWorkspace(
+                            selectedMaterial.id,
+                            observations.length > 0 ? 'observations' : 'segments',
+                          );
+                        }}
+                        disabled={activeTutorialTarget !== 'extraction' && !extractedPreview}
+                        className={`w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 ${
+                          activeTutorialTarget === 'extraction' ? '' : 'disabled:opacity-40'
+                        } ${tutorialTargetClass('extraction')}`}
+                      >
+                        View Content and Observations
+                      </button>
                   </div>
                 </div>
               )}
@@ -2031,7 +2355,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       </div>
       {isExtractedModalOpen && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+          <div
+            data-tutorial-target="content-modal"
+            className={`relative flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl ${tutorialTargetClass('content-modal')}`}
+          >
+            {activeTutorialTarget && (
+              <div className="pointer-events-none absolute inset-0 z-[20] bg-slate-950/45" aria-hidden="true" />
+            )}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">
@@ -2042,9 +2372,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                 </p>
               </div>
               <button
+                data-tutorial-target="close-annotation"
                 type="button"
                 onClick={() => setIsExtractedModalOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 hover:bg-slate-100"
+                className={`flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 hover:bg-slate-100 ${tutorialTargetClass('close-annotation')}`}
                 title="Close"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2053,7 +2384,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
               </button>
             </div>
 
-            <div className="border-b border-slate-200 px-5 pt-3">
+            <div
+              data-tutorial-target="annotation"
+              className={`border-b border-slate-200 px-5 pt-3 ${tutorialTargetClass('annotation')}`}
+            >
               <div className="flex gap-2">
                 {[
                   ['segments', `Text (${extractedPreview?.segments?.length ?? 0})`],
@@ -2065,8 +2399,9 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   <button
                     key={tab}
                     type="button"
+                    data-tutorial-target={tab === 'images' ? 'image-tab' : undefined}
                     onClick={() => setExtractedModalTab(tab as 'segments' | 'images' | 'links' | 'observations' | 'runs')}
-                    className={`rounded-t-lg px-4 py-2 text-[10px] font-black uppercase tracking-wider ${
+                    className={`rounded-t-lg px-4 py-2 text-[10px] font-black uppercase tracking-wider ${tab === 'images' ? tutorialTargetClass('image-tab') : ''} ${
                       extractedModalTab === tab
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
@@ -2085,7 +2420,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
               {extractedPreview && extractedModalTab === 'segments' && (
                 <div ref={segmentListRef} className="space-y-3">
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">
+                  <div
+                    data-tutorial-target="text-observations"
+                    className={`rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800 ${tutorialTargetClass('text-observations')}`}
+                  >
                     Select a word or phrase in a source segment, then click Mark Observation. The selected text, page reference, locator, and context are carried into the observation form.
                   </div>
                   {extractedPreview.segments.length === 0 && (
@@ -2120,9 +2458,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                         </p>
                         <div className="mt-3 flex justify-end">
                           <button
+                            data-tutorial-target="text-observations"
                             type="button"
-                            onClick={() => startObservationFromSegment(segment)}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                            onClick={() => {
+                              startObservationFromSegment(segment);
+                              notifyTutorialAction('text-observations');
+                            }}
+                            className={`rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 ${tutorialTargetClass('text-observations')}`}
                           >
                             Mark Observation
                           </button>
@@ -2135,7 +2477,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
               {extractedPreview && extractedModalTab === 'images' && (
                 <div ref={imageListRef} className="space-y-4">
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">
+                  <div
+                    data-tutorial-target="image-observations"
+                    className={`rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800 ${tutorialTargetClass('image-observations')}`}
+                  >
                     Image evidence is stored separately from text. Captions describe visible content and should be reviewed as metadata, not interpretation.
                   </div>
                   {(extractedPreview.images || []).length === 0 && (
@@ -2184,9 +2529,13 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                           )}
                           <div className="mt-3 flex justify-end">
                             <button
+                              data-tutorial-target="image-observations"
                               type="button"
-                              onClick={() => startObservationFromImage(image)}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                              onClick={() => {
+                                startObservationFromImage(image);
+                                notifyTutorialAction('image-observations');
+                              }}
+                              className={`rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 ${tutorialTargetClass('image-observations')}`}
                             >
                               Mark Image Observation
                             </button>
@@ -2229,7 +2578,10 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
               {extractedPreview && extractedModalTab === 'observations' && (
                 <div className="grid gap-4 lg:grid-cols-[minmax(260px,360px)_1fr]">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div
+                    data-tutorial-target="observation-save"
+                    className={`rounded-xl border border-slate-200 bg-slate-50 p-4 ${tutorialTargetClass('observation-save')}`}
+                  >
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                       {editingObservationId ? 'Edit Observation' : 'New Observation'}
                     </div>
@@ -2263,14 +2615,16 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                         </p>
                       </div>
 
-                      <Field label="Observed Text">
-                        <input
-                          value={observationForm.observed_text}
-                          onChange={(event) => updateObservationForm('observed_text', event.target.value)}
-                          placeholder="Observed word, motif, place, material, or process"
-                          className="repo-input"
-                        />
-                      </Field>
+                      {!observationForm.source_image_id && (
+                        <Field label="Observed Text">
+                          <input
+                            value={observationForm.observed_text}
+                            onChange={(event) => updateObservationForm('observed_text', event.target.value)}
+                            placeholder="Observed word, motif, place, material, or process"
+                            className="repo-input"
+                          />
+                        </Field>
+                      )}
 
                       <div className="grid grid-cols-2 gap-3">
                         <Field label="Page Ref">
@@ -2324,10 +2678,14 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
 
                       <div className="flex flex-wrap gap-2">
                         <button
+                          data-tutorial-target="observation-save"
                           type="button"
-                          onClick={saveObservation}
-                          disabled={isSavingObservation || !observationForm.observed_text.trim()}
-                          className="rounded-lg bg-slate-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => {
+                            saveObservation();
+                            notifyTutorialAction('observation-save');
+                          }}
+                          disabled={isSavingObservation || (!observationForm.source_image_id && !observationForm.observed_text.trim())}
+                          className={`rounded-lg bg-slate-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white disabled:cursor-not-allowed disabled:opacity-40 ${tutorialTargetClass('observation-save')}`}
                         >
                           {isSavingObservation ? 'Saving' : editingObservationId ? 'Update' : 'Save Observation'}
                         </button>
@@ -2461,7 +2819,8 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       {showSearchReportModal && searchReport && (
         <SearchReportModal
           searchReport={searchReport}
-          onDownload={downloadSearchReportPdf}
+          onDownloadPdf={downloadSearchReportPdf}
+          onDownloadCsv={downloadSearchReportCsv}
           onClose={() => setShowSearchReportModal(false)}
           onSelectMaterial={(materialId) => {
             setSelectedId(materialId);
@@ -2470,69 +2829,6 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         />
       )}
 
-      {showLinkModal && (
-        <div className="fixed inset-0 z-[90] bg-slate-950/50 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl rounded-xl bg-white border border-slate-200 shadow-2xl">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">Add Link Material</h3>
-              <button
-                onClick={() => setShowLinkModal(false)}
-                className="h-8 w-8 rounded-md border border-slate-200 hover:bg-slate-100 flex items-center justify-center"
-                title="Close"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              <Field label="Source URL">
-                <input
-                  value={linkForm.source_url}
-                  onChange={(event) => setLinkForm((current) => ({ ...current, source_url: event.target.value }))}
-                  className="repo-input"
-                  placeholder="https://..."
-                />
-              </Field>
-              <Field label="Title (Optional)">
-                <input
-                  value={linkForm.title}
-                  onChange={(event) => setLinkForm((current) => ({ ...current, title: event.target.value }))}
-                  className="repo-input"
-                />
-              </Field>
-              <Field label="Source Type">
-                <select
-                  value={linkForm.source_type}
-                  onChange={(event) => setLinkForm((current) => ({ ...current, source_type: event.target.value }))}
-                  className="repo-input"
-                >
-                  {sourceTypes.map((sourceType) => (
-                    <option key={sourceType} value={sourceType}>
-                      {SOURCE_TYPE_LABELS[sourceType] || sourceType}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <div className="px-5 py-4 border-t border-slate-200 flex justify-end gap-3">
-              <button
-                onClick={() => setShowLinkModal(false)}
-                className="h-10 px-4 rounded-lg border border-slate-200 text-xs font-black uppercase tracking-wider hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={createLinkMaterial}
-                disabled={isCreatingLink}
-                className="h-10 px-4 rounded-lg bg-slate-900 text-white text-xs font-black uppercase tracking-wider disabled:opacity-40"
-              >
-                {isCreatingLink ? 'Adding' : 'Add Link'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
