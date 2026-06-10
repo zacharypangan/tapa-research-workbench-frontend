@@ -1,606 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { API_BASE_URL } from '../config';
-
-interface RepositoryFile {
-  id: string;
-  material_id: string;
-  original_filename: string;
-  mime_type?: string | null;
-  file_size: number;
-  uploaded_at: string;
-}
-
-interface ExtractionRunSummary {
-  status?: string;
-  warnings?: string | null;
-  error_message?: string | null;
-  created_at?: string;
-}
-
-interface Material {
-  id: string;
-  title: string;
-  authors?: string | null;
-  year?: string | null;
-  source_type: string;
-  collection?: string | null;
-  abstract_or_notes?: string | null;
-  source_url?: string | null;
-  language?: string | null;
-  region?: string | null;
-  uploaded_by?: string | null;
-  raw_reference?: string | null;
-  keywords?: string | null;
-  auto_keywords?: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  file_count: number;
-  observation_count?: number;
-  observation_type_counts?: Record<string, number>;
-  files?: RepositoryFile[];
-  extraction_status?: string;
-  segment_count?: number;
-  latest_extraction_run?: ExtractionRunSummary | null;
-}
-
-interface RepositoryWorkbenchProps {
-  onClose: () => void;
-}
-
-
-interface ExtractedPreview {
-  segments: Array<{
-    id: number | string;
-    source_kind?: string;
-    source_locator?: string;
-    page_ref?: string;
-    page_index?: number;
-    content_text?: string;
-    text?: string;
-    char_count?: number;
-    created_at?: string;
-  }>;
-  discovered_links: Array<{
-    id?: number | string;
-    source_url?: string;
-    discovered_url?: string;
-    link_text?: string | null;
-    title?: string | null;
-    depth?: number;
-    status?: string;
-    created_at?: string;
-  }>;
-  images?: ImageEvidence[];
-  runs: Array<{
-    id: string;
-    include_links?: number;
-    max_link_depth?: number;
-    max_link_pages?: number;
-    extracted_segment_count: number;
-    discovered_link_count: number;
-    status: string;
-    error_message?: string | null;
-    warnings?: string | null;
-    created_at: string;
-  }>;
-}
-
-interface Observation {
-  id: string;
-  material_id: string;
-  source_segment_id?: number | null;
-  source_image_id?: string | null;
-  observation_type: string;
-  observed_text: string;
-  source_page_ref?: string | null;
-  source_locator?: string | null;
-  context_quote?: string | null;
-  notes?: string | null;
-  observed_by?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface SearchResult {
-  id: number;
-  material_id: string;
-  material_title: string;
-  source_kind: string;
-  source_locator: string;
-  page_ref: string;
-  snippet_text: string;
-}
-
-interface SearchReportResult {
-  segment_id: number | string;
-  material_id: string;
-  material_title: string;
-  material_authors?: string | null;
-  material_year?: string | null;
-  source_kind: string;
-  source_locator: string;
-  page_ref: string;
-  page_index: number;
-  paragraph_index: number;
-  matched_terms: string[];
-  terms_in_context: string[];
-  all_terms_in_context: boolean;
-  before: string;
-  match: string;
-  after: string;
-  context_text: string;
-}
-
-interface SearchReport {
-  query: string;
-  query_terms: string[];
-  context_window: number;
-  total_matches: number;
-  cooccurrence_count: number;
-  results: SearchReportResult[];
-}
-
-interface AIStatus {
-  provider_configured: boolean;
-  embedding_model?: string;
-  chat_model?: string;
-  segment_count?: number;
-  embedded_segment_count?: number;
-  image_evidence_count?: number;
-  embedded_image_count?: number;
-  default_mode?: string;
-  status_message?: string;
-}
-
-interface SemanticResult {
-  evidence_type?: string;
-  segment_id: number;
-  material_id: string;
-  material_title: string;
-  material_authors?: string | null;
-  material_year?: string | null;
-  source_kind: string;
-  source_locator: string;
-  page_ref: string;
-  page_index: number;
-  content_text: string;
-  score: number;
-  semantic_score?: number;
-  retrieval_basis?: string;
-}
-
-interface ImageEvidence {
-  evidence_type: 'document_image' | 'page_snapshot' | 'slide_image' | string;
-  image_id: string;
-  material_id: string;
-  file_id?: string | null;
-  material_title?: string;
-  material_authors?: string | null;
-  material_year?: string | null;
-  source_kind: string;
-  source_locator: string;
-  page_ref: string;
-  page_index: number;
-  image_url: string;
-  mime_type?: string | null;
-  width?: number;
-  height?: number;
-  extraction_method?: string;
-  ocr_text?: string | null;
-  visual_caption?: string | null;
-  semantic_score?: number;
-  score?: number;
-  matched_terms?: string[];
-  contains_exact_term?: boolean;
-  retrieval_basis?: string;
-  evidence_level?: string;
-}
-
-interface SemanticSearchResponse {
-  query: string;
-  provider_configured: boolean;
-  embedding_model?: string;
-  results: SemanticResult[];
-  image_results?: ImageEvidence[];
-  related_observations: Observation[];
-  evidence_note?: string;
-}
-
-interface AskCorpusResponse {
-  question: string;
-  provider_configured: boolean;
-  answer: string;
-  citations?: Array<{
-    material_id: string;
-    material_title: string;
-    material_authors?: string | null;
-    material_year?: string | null;
-    segment_id: number;
-    page_ref: string;
-    source_locator: string;
-  }>;
-  retrieved_passages?: SemanticResult[];
-  image_results?: ImageEvidence[];
-  related_observations?: Observation[];
-  evidence_note?: string;
-}
-
-interface AIEvidenceReport {
-  query: string;
-  provider_configured: boolean;
-  themes: Array<{
-    theme: string;
-    material_id: string;
-    material_title: string;
-    citations: AskCorpusResponse['citations'];
-    passages: Array<{
-      segment_id: number;
-      page_ref: string;
-      score: number;
-      content_text: string;
-    }>;
-    image_passages?: ImageEvidence[];
-  }>;
-  image_results?: ImageEvidence[];
-  related_observations: Observation[];
-  evidence_note?: string;
-}
-
-const EMPTY_FORM = {
-  title: '',
-  authors: '',
-  year: '',
-  source_type: 'other',
-  collection: '',
-  abstract_or_notes: '',
-  source_url: '',
-  language: '',
-  region: '',
-  uploaded_by: '',
-  raw_reference: '',
-  keywords: '',
-  auto_keywords: '',
-  status: 'needs_metadata',
-};
-
-const EMPTY_LINK_FORM = {
-  title: '',
-  source_url: '',
-  source_type: 'other',
-};
-
-const EMPTY_OBSERVATION_FORM = {
-  observation_type: 'term',
-  observed_text: '',
-  source_segment_id: '',
-  source_image_id: '',
-  source_page_ref: '',
-  source_locator: '',
-  context_quote: '',
-  notes: '',
-  observed_by: '',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  uploaded: 'Uploaded',
-  needs_metadata: 'Needs Metadata',
-  metadata_complete: 'Complete',
-  needs_review: 'Needs Review',
-  ready_for_text_extraction: 'Ready',
-};
-
-const EXTRACTION_STATUS_LABELS: Record<string, string> = {
-  not_extracted: 'Not Extracted',
-  extracting: 'Extracting',
-  extracted: 'Extracted',
-  no_text_found: 'No Text',
-  extract_error: 'Error',
-};
-
-const SOURCE_TYPE_LABELS: Record<string, string> = {
-  anthropological_record: 'Anthropological Record',
-  bibliography: 'Bibliography',
-  dictionary: 'Dictionary',
-  ethnography: 'Ethnography',
-  other: 'Other',
-  pdf: 'PDF',
-  presentation: 'Presentation',
-  publication: 'Publication',
-  slide: 'Slide',
-  workshop_material: 'Workshop Material',
-};
-
-const OBSERVATION_TYPE_LABELS: Record<string, string> = {
-  term: 'Term',
-  motif: 'Motif',
-  place: 'Place',
-  material: 'Material',
-  process: 'Process',
-  other: 'Other',
-};
-
-function compactPayload(form: typeof EMPTY_FORM) {
-  return Object.fromEntries(
-    Object.entries(form).map(([key, value]) => [
-      key,
-      typeof value === 'string' && value.trim() === '' ? null : value,
-    ]),
-  );
-}
-
-function guessSourceType(file: File) {
-  const name = file.name.toLowerCase();
-  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
-  if (name.endsWith('.ppt') || name.endsWith('.pptx')) return 'presentation';
-  if (name.endsWith('.bib') || name.endsWith('.ris')) return 'bibliography';
-  return 'other';
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
-function getExtractionBadgeClass(status?: string) {
-  switch (status) {
-    case 'extracted':
-      return 'bg-green-100 text-green-700';
-    case 'extracting':
-      return 'bg-blue-100 text-blue-700';
-    case 'no_text_found':
-      return 'bg-amber-100 text-amber-700';
-    case 'extract_error':
-      return 'bg-red-100 text-red-700';
-    case 'not_extracted':
-    default:
-      return 'bg-slate-100 text-slate-600';
-  }
-}
-
-function getObservationBadgeClass(type?: string) {
-  switch (type) {
-    case 'term':
-      return 'bg-blue-50 text-blue-700';
-    case 'motif':
-      return 'bg-rose-50 text-rose-700';
-    case 'place':
-      return 'bg-emerald-50 text-emerald-700';
-    case 'material':
-      return 'bg-amber-50 text-amber-700';
-    case 'process':
-      return 'bg-violet-50 text-violet-700';
-    default:
-      return 'bg-slate-100 text-slate-600';
-  }
-}
-
-function getObservationTypeHint(type: string) {
-  switch (type) {
-    case 'term':
-      return 'Words, local names, lexical forms, or named expressions observed in the source.';
-    case 'motif':
-      return 'Visual forms, design elements, patterns, or repeated marks observed in the source.';
-    case 'place':
-      return 'Locations, regions, islands, villages, or spatial references observed in the source.';
-    case 'material':
-      return 'Plants, fibers, tools, pigments, substances, or physical inputs observed in the source.';
-    case 'process':
-      return 'Actions, production steps, preparation methods, or handling procedures observed in the source.';
-    default:
-      return 'Observed evidence that does not yet fit another capture type.';
-  }
-}
-
-function truncateText(value?: string | null, maxLength = 240) {
-  if (!value) return '';
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength).trim()}...`;
-}
-
-function formatLinkStatus(status?: string) {
-  switch (status) {
-    case 'ok':
-      return 'Accessible';
-    case 'access_restricted':
-      return 'Access restricted';
-    case 'fetch_error':
-      return 'Fetch failed';
-    default:
-      return status || 'Unknown';
-  }
-}
-
-function getSegmentText(segment: ExtractedPreview['segments'][number]) {
-  return cleanAnnotationText(segment.content_text || segment.text || 'No preview text returned for this segment.');
-}
-
-function cleanAnnotationText(text: string) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  const nonEmpty = lines.filter((line) => line.trim());
-  if (nonEmpty.length < 6) return text.trim();
-
-  const leadingNumbered = nonEmpty.filter((line) => /^\s*\d{1,4}\s+\S/.test(line) || /^\s*\d{1,4}\s*$/.test(line)).length;
-  const trailingNumbered = nonEmpty.filter((line) => /\S\s+\d{1,4}\s*$/.test(line)).length;
-  const hasDenseLeadingNumbers = leadingNumbered >= 5 && leadingNumbered / nonEmpty.length >= 0.25;
-  const hasDenseTrailingNumbers = trailingNumbered >= 5 && trailingNumbered / nonEmpty.length >= 0.25;
-
-  if (!hasDenseLeadingNumbers && !hasDenseTrailingNumbers) return text.trim();
-
-  const cleanedLines = lines.flatMap((line) => {
-    let cleaned = line;
-    if (hasDenseLeadingNumbers) {
-      if (/^\s*\d{1,4}\s*$/.test(cleaned)) return [];
-      cleaned = cleaned.replace(/^\s*\d{1,4}\s+(?=\S)/, '');
-    }
-    if (hasDenseTrailingNumbers) {
-      cleaned = cleaned.replace(/(?<=\S)\s+\d{1,4}\s*$/, '');
-    }
-    return [cleaned];
-  });
-
-  return cleanedLines
-    .join('\n')
-    .replace(/([A-Za-z])-\n([A-Za-z])/g, '$1$2')
-    .replace(/(?<!\n)\n(?!\n)/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
-
-function escapeHtml(value: unknown) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function highlightSearchTermsHtml(text: string, terms: string[]) {
-  const escapedText = escapeHtml(text);
-
-  const expandedTerms = terms.flatMap((term) => {
-    const normalized = term.toLowerCase().trim();
-
-    if (
-      normalized === 'beat' ||
-      normalized === 'beat verb' ||
-      normalized === 'beat (verb)'
-    ) {
-      return ['beating', 'beaten', 'beats', 'beat'];
-    }
-
-    return [term];
-  });
-
-  const patterns = expandedTerms
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length)
-    .map((term) => escapeRegExp(escapeHtml(term)).replace(/\s+/g, '\\s+'));
-
-  if (!patterns.length) {
-    return escapedText;
-  }
-
-  const regex = new RegExp(`(${patterns.join('|')})`, 'gi');
-
-  return escapedText.replace(
-    regex,
-    '<mark class="term-highlight">$1</mark>',
-  );
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function buildHighlightRegex(terms: string[]) {
-  const expandedTerms = terms.flatMap((term) => {
-    const normalized = term.toLowerCase().trim();
-
-    if (normalized === 'beat' || normalized === 'beat verb' || normalized === 'beat (verb)') {
-      return ['beat', 'beats', 'beating', 'beaten'];
-    }
-
-    return [term];
-  });
-
-  const patterns = expandedTerms
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length)
-    .map((term) => escapeRegExp(term).replace(/\s+/g, '\\s+'));
-
-  if (!patterns.length) return null;
-
-  return new RegExp(`(${patterns.join('|')})`, 'gi');
-}
-
-function buildQueryTerms(query: string) {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
-
-  const commaTerms = trimmed
-    .split(',')
-    .map((term) => term.trim())
-    .filter((term) => term.length > 1);
-
-  if (commaTerms.length > 1) return commaTerms;
-
-  const wordTerms = trimmed
-    .split(/\s+/)
-    .map((term) => term.trim())
-    .filter((term) => term.length > 2);
-
-  return [trimmed, ...wordTerms];
-}
-
-function highlightSearchTerms(text: string, terms: string[]) {
-  const regex = buildHighlightRegex(terms);
-
-  if (!regex || !text) {
-    return text;
-  }
-
-  const parts = text.split(regex);
-
-  return parts.map((part, index) => {
-    if (regex.test(part)) {
-      regex.lastIndex = 0;
-      return (
-        <mark key={`${part}-${index}`} className="rounded bg-amber-200 px-0.5 text-slate-950">
-          {part}
-        </mark>
-      );
-    }
-
-    regex.lastIndex = 0;
-    return <span key={`${part}-${index}`}>{part}</span>;
-  });
-}
-
-function getRetrievalReason(text: string, terms: string[], score?: number) {
-  const regex = buildHighlightRegex(terms);
-  const cleanedText = cleanAnnotationText(text || '');
-  const scoreText = typeof score === 'number' ? `${(score * 100).toFixed(1)} semantic score` : 'semantic score';
-
-  if (!regex || !cleanedText) {
-    return `Retrieved by embedding similarity (${scoreText}); no exact search token was available for comparison.`;
-  }
-
-  regex.lastIndex = 0;
-  const hasLiteralTerm = regex.test(cleanedText);
-  regex.lastIndex = 0;
-
-  if (hasLiteralTerm) {
-    return `Contains the search term or an expanded variant; also ranked by embedding similarity (${scoreText}).`;
-  }
-
-  return `Retrieved by embedding similarity (${scoreText}); the exact search token does not appear in this passage. Review as a possible conceptual neighbor, not a direct text match.`;
-}
-
-async function parseErrorResponse(response: Response, fallback: string) {
-  try {
-    const data = await response.json();
-    if (typeof data?.detail === 'string') return data.detail;
-    if (typeof data?.message === 'string') return data.message;
-  } catch {
-    // Fall through to status text fallback.
-  }
-  return `${fallback} (${response.status})`;
-}
+import {
+  EMPTY_FORM,
+  EMPTY_LINK_FORM,
+  EMPTY_OBSERVATION_FORM,
+  EXTRACTION_STATUS_LABELS,
+  OBSERVATION_TYPE_LABELS,
+  SOURCE_TYPE_LABELS,
+  STATUS_LABELS,
+} from './repository/constants';
+import {
+  buildQueryTerms,
+  cleanAnnotationText,
+  compactPayload,
+  escapeHtml,
+  formatBytes,
+  formatDate,
+  formatEvidenceLabel,
+  formatLinkStatus,
+  getErrorMessage,
+  getExtractionBadgeClass,
+  getObservationBadgeClass,
+  getObservationTypeHint,
+  getRetrievalReason,
+  getSegmentText,
+  guessSourceType,
+  highlightSearchTerms,
+  highlightSearchTermsHtml,
+  parseErrorResponse,
+  printableEvidenceMeta,
+  printableWordlistRows,
+  relevanceBadgeClass,
+  truncateText,
+} from './repository/formatters';
+import { buildPrintableReportHtml } from './repository/printableReport';
+import { SearchReportModal } from './repository/SearchReportModal';
+import type {
+  AIEvidenceReport,
+  AIStatus,
+  AskCorpusResponse,
+  ExtractedPreview,
+  ImageEvidence,
+  Material,
+  Observation,
+  RepositoryWorkbenchProps,
+  SearchReport,
+  SearchResult,
+  SemanticSearchResponse,
+} from './repository/types';
 
 export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -1403,182 +850,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
   };
 
   const openPrintableReport = (title: string, summaryHtml: string, bodyHtml: string, footerText: string) => {
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>${escapeHtml(title)}</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 18mm;
-            }
-
-            body {
-              margin: 0;
-              background: #ffffff;
-              color: #0f172a;
-              font-family: Arial, sans-serif;
-              font-size: 11pt;
-              line-height: 1.55;
-            }
-
-            h1 {
-              margin: 0 0 16px;
-              font-size: 22pt;
-              letter-spacing: 0.03em;
-            }
-
-            h2 {
-              margin: 22px 0 4px;
-              font-size: 14pt;
-              page-break-after: avoid;
-            }
-
-            h3 {
-              margin: 14px 0 4px;
-              color: #475569;
-              font-size: 9.5pt;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
-              page-break-after: avoid;
-            }
-
-            p {
-              margin: 4px 0 8px;
-            }
-
-            .summary {
-              border: 1px solid #cbd5e1;
-              border-radius: 8px;
-              padding: 12px;
-              margin-bottom: 20px;
-              page-break-inside: avoid;
-            }
-
-            .result {
-              border-top: 1px solid #cbd5e1;
-              padding-top: 16px;
-              margin-top: 18px;
-              page-break-inside: auto;
-            }
-
-            .meta {
-              color: #64748b;
-              font-size: 9.5pt;
-            }
-
-            .badges {
-              display: flex;
-              flex-wrap: wrap;
-              gap: 6px;
-              margin: 8px 0 10px;
-            }
-
-            .badge {
-              display: inline-block;
-              border-radius: 999px;
-              padding: 3px 8px;
-              font-size: 8.5pt;
-              font-weight: 700;
-              letter-spacing: 0.04em;
-              text-transform: uppercase;
-            }
-
-            .badge.matched {
-              background: #fef3c7;
-              color: #92400e;
-            }
-
-            .badge.all {
-              background: #dcfce7;
-              color: #166534;
-            }
-
-            .context {
-              color: #334155;
-            }
-
-            .match {
-              border-left: 4px solid #f59e0b;
-              background: #fffbeb;
-              padding: 8px 12px;
-            }
-
-            .answer {
-              border-left: 4px solid #2563eb;
-              background: #eff6ff;
-              padding: 10px 12px;
-              white-space: pre-wrap;
-            }
-
-            .evidence-image {
-              max-width: 100%;
-              max-height: 360px;
-              display: block;
-              margin: 8px 0;
-              border: 1px solid #cbd5e1;
-              border-radius: 6px;
-            }
-
-            .term-highlight {
-              background: #fde68a !important;
-              color: #0f172a !important;
-              border: 1px solid #f59e0b;
-              border-radius: 3px;
-              padding: 0 2px;
-              font-weight: 700;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-
-            @media print {
-              .term-highlight {
-                background: #fde68a !important;
-                color: #0f172a !important;
-                border: 1px solid #f59e0b;
-                font-weight: 700;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-              }
-            }
-
-            .footer {
-              margin-top: 24px;
-              border-top: 1px solid #cbd5e1;
-              padding-top: 10px;
-              color: #64748b;
-              font-size: 9pt;
-            }
-          </style>
-        </head>
-
-        <body>
-          <h1>${escapeHtml(title)}</h1>
-
-          <div class="summary">${summaryHtml}</div>
-
-          ${bodyHtml}
-
-          <div class="footer">
-            ${escapeHtml(footerText)}
-          </div>
-
-          <script>
-            window.addEventListener('load', function () {
-              window.focus();
-
-              requestAnimationFrame(function () {
-                setTimeout(function () {
-                  window.print();
-                }, 500);
-              });
-            });
-          </script>
-        </body>
-      </html>
-    `;
+    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText);
 
     const printWindow = window.open('', '_blank', 'width=900,height=700');
 
@@ -1618,10 +890,12 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   : ''
               }
             </div>
+            ${printableEvidenceMeta(result)}
 
             <p><strong>Matched terms:</strong> ${escapeHtml(result.matched_terms.join(', '))}</p>
             <p><strong>Terms in context:</strong> ${escapeHtml(result.terms_in_context.join(', '))}</p>
             <p><strong>All terms in context:</strong> ${result.all_terms_in_context ? 'Yes' : 'No'}</p>
+            ${printableWordlistRows(result.wordlist_rows)}
 
             ${
               result.before
@@ -1676,6 +950,8 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
             · ${escapeHtml(passage.source_locator)}
             · ${(passage.score * 100).toFixed(1)} match
           </p>
+          ${printableEvidenceMeta(passage)}
+          ${printableWordlistRows(passage.wordlist_rows)}
           <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
           <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
         </section>
@@ -1689,6 +965,8 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
             ${escapeHtml(image.page_ref)} · ${escapeHtml(image.source_locator)}
             ${image.semantic_score ? ` · ${(image.semantic_score * 100).toFixed(1)} image-text match` : ''}
           </p>
+          ${printableEvidenceMeta(image)}
+          ${printableWordlistRows(image.wordlist_rows)}
           <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
           <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
           ${image.ocr_text ? `<h3>OCR Text</h3><p class="context">${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
@@ -1724,9 +1002,15 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
         <section class="result">
           <h2>${index + 1}. ${escapeHtml(theme.material_title)}</h2>
           <p class="meta">${theme.passages.length} cited text passages · ${(theme.image_passages || []).length} image evidence items</p>
+          <p class="meta">
+            High ${escapeHtml(theme.high_relevance_count ?? 0)} · Medium ${escapeHtml(theme.medium_relevance_count ?? 0)} · Low ${escapeHtml(theme.low_relevance_count ?? 0)}
+            ${(theme.dominant_senses || []).length ? ` · Senses: ${escapeHtml((theme.dominant_senses || []).map(formatEvidenceLabel).join(', '))}` : ''}
+          </p>
           ${theme.passages
             .map((passage) => `
               <h3>${escapeHtml(passage.page_ref)} · ${(passage.score * 100).toFixed(1)} match</h3>
+              ${printableEvidenceMeta(passage)}
+              ${printableWordlistRows(passage.wordlist_rows)}
               <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
               <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
             `)
@@ -1734,6 +1018,7 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
           ${(theme.image_passages || [])
             .map((image) => `
               <h3>${escapeHtml(image.page_ref)} · image evidence</h3>
+              ${printableEvidenceMeta(image)}
               <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
               <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
               ${image.ocr_text ? `<p class="context"><strong>OCR:</strong> ${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
@@ -2234,20 +1519,59 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                   </div>
                   {aiEvidenceReport.themes.map((theme) => (
                     <div key={theme.material_id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                      <div className="text-sm font-black text-slate-800">{theme.material_title}</div>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="text-sm font-black text-slate-800">{theme.material_title}</div>
+                        <div className="flex flex-wrap gap-1 text-[10px] font-black uppercase tracking-wider">
+                          <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">
+                            High {theme.high_relevance_count ?? 0}
+                          </span>
+                          <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-700">
+                            Medium {theme.medium_relevance_count ?? 0}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-500">
+                            Low {theme.low_relevance_count ?? 0}
+                          </span>
+                        </div>
+                      </div>
+                      {!!theme.dominant_senses?.length && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {theme.dominant_senses.map((sense) => (
+                            <span
+                              key={sense}
+                              className="rounded-full bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500"
+                            >
+                              {formatEvidenceLabel(sense)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className="mt-2 space-y-2">
                         {theme.passages.slice(0, 3).map((passage) => (
                           <button
                             key={passage.segment_id}
                             type="button"
                             onClick={() => openAnnotationWorkspace(theme.material_id, 'segments', passage.segment_id)}
-                            className="block w-full rounded-lg bg-white p-3 text-left text-xs leading-relaxed text-slate-600 hover:bg-blue-50"
+                            className={`block w-full rounded-lg bg-white p-3 text-left text-xs leading-relaxed hover:bg-blue-50 ${
+                              passage.research_relevance === 'low' ? 'text-slate-400 opacity-75' : 'text-slate-600'
+                            }`}
                           >
                             <div className="mb-1 font-bold text-slate-400">
                               {passage.page_ref} · {(passage.score * 100).toFixed(1)} match
                             </div>
+                            <div className="mb-2 flex flex-wrap gap-1">
+                              {passage.research_relevance && (
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${relevanceBadgeClass(passage.research_relevance)}`}>
+                                  {passage.research_relevance}
+                                </span>
+                              )}
+                              {passage.sense && (
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                  {formatEvidenceLabel(passage.sense)}
+                                </span>
+                              )}
+                            </div>
                             <div className="mb-2 font-semibold text-blue-700">
-                              {getRetrievalReason(passage.content_text, activeQueryTerms, passage.score)}
+                              {passage.relevance_reason || getRetrievalReason(passage.content_text, activeQueryTerms, passage.score)}
                             </div>
                             {highlightSearchTerms(truncateText(cleanAnnotationText(passage.content_text), 320), activeQueryTerms)}
                           </button>
@@ -2257,7 +1581,9 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                             key={image.image_id}
                             type="button"
                             onClick={() => openAnnotationWorkspace(image.material_id, 'images', null, image.image_id)}
-                            className="grid w-full gap-3 rounded-lg bg-white p-3 text-left text-xs leading-relaxed text-slate-600 hover:bg-blue-50 sm:grid-cols-[96px_1fr]"
+                            className={`grid w-full gap-3 rounded-lg bg-white p-3 text-left text-xs leading-relaxed hover:bg-blue-50 sm:grid-cols-[96px_1fr] ${
+                              image.research_relevance === 'low' ? 'text-slate-400 opacity-75' : 'text-slate-600'
+                            }`}
                           >
                             <img
                               src={imageEvidenceUrl(image)}
@@ -2268,8 +1594,20 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
                               <div className="mb-1 font-bold text-slate-400">
                                 {image.page_ref} · image evidence
                               </div>
+                              <div className="mb-2 flex flex-wrap gap-1">
+                                {image.research_relevance && (
+                                  <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${relevanceBadgeClass(image.research_relevance)}`}>
+                                    {image.research_relevance}
+                                  </span>
+                                )}
+                                {image.sense && (
+                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                    {formatEvidenceLabel(image.sense)}
+                                  </span>
+                                )}
+                              </div>
                               <div className="mb-2 font-semibold text-blue-700">
-                                {image.retrieval_basis}
+                                {image.relevance_reason || image.retrieval_basis}
                               </div>
                               {highlightSearchTerms(truncateText(cleanAnnotationText(image.ocr_text || image.visual_caption || ''), 240), activeQueryTerms)}
                             </div>
@@ -3121,139 +2459,15 @@ export default function RepositoryWorkbench({ onClose }: RepositoryWorkbenchProp
       )}
 
       {showSearchReportModal && searchReport && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-              <div>
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">
-                  Search Context Report
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  Query: {searchReport.query}
-                </p>
-                <p className="mt-1 text-xs text-slate-400">
-                  {searchReport.total_matches} context matches · {searchReport.cooccurrence_count} co-occurrence windows
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={downloadSearchReportPdf}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-                >
-                  Download PDF
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowSearchReportModal(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 hover:bg-slate-100"
-                  title="Close"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="border-b border-slate-100 px-5 py-3">
-              <div className="flex flex-wrap gap-2">
-                {searchReport.query_terms.map((term) => (
-                  <span
-                    key={term}
-                    className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"
-                  >
-                    {term}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-auto p-5">
-              {searchReport.results.length === 0 && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                  No matches found in extracted text.
-                </div>
-              )}
-
-              <div className="space-y-4">
-                {searchReport.results.map((result, index) => (
-                  <div
-                    key={`${result.segment_id}-${result.paragraph_index}-${index}`}
-                    className="rounded-xl border border-slate-200 bg-white p-4"
-                  >
-                    <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(result.material_id);
-                            setShowSearchReportModal(false);
-                          }}
-                          className="truncate text-left text-sm font-black text-slate-800 hover:text-blue-700"
-                        >
-                          {result.material_title}
-                        </button>
-
-                        <div className="mt-1 text-xs text-slate-400">
-                          {result.material_authors || 'Unknown author'}
-                          {result.material_year ? ` · ${result.material_year}` : ''}
-                          {' · '}
-                          {result.page_ref}
-                          {' · '}
-                          {result.source_locator}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {result.matched_terms.map((term) => (
-                          <span
-                            key={term}
-                            className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700"
-                          >
-                            {term}
-                          </span>
-                        ))}
-
-                        {result.all_terms_in_context && (
-                          <span className="rounded-full bg-green-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-green-700">
-                            all terms in context
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {result.before && (
-                      <div className="mb-3 rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-500">
-                        <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          Previous paragraph
-                        </div>
-                        {highlightSearchTerms(result.before, searchReport.query_terms)}
-                      </div>
-                    )}
-
-                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-slate-800">
-                      <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-amber-700">
-                        Matching paragraph
-                      </div>
-                      {highlightSearchTerms(result.match, searchReport.query_terms)}
-                    </div>
-
-                    {result.after && (
-                      <div className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-500">
-                        <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          Next paragraph
-                        </div>
-                        {highlightSearchTerms(result.after, searchReport.query_terms)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
+        <SearchReportModal
+          searchReport={searchReport}
+          onDownload={downloadSearchReportPdf}
+          onClose={() => setShowSearchReportModal(false)}
+          onSelectMaterial={(materialId) => {
+            setSelectedId(materialId);
+            setShowSearchReportModal(false);
+          }}
+        />
       )}
 
       {showLinkModal && (

@@ -34,7 +34,7 @@ VITE_API_BASE_URL=http://localhost:8000/api/v1
 For production/Vercel, set the same variable to the deployed backend API:
 
 ```env
-VITE_API_BASE_URL=https://stlingbackend.up.railway.app/api/v1
+VITE_API_BASE_URL=https://<railway-backend-domain>/api/v1
 ```
 
 ## Deploying to Vercel
@@ -52,6 +52,8 @@ Output Directory: dist
 ```
 
 Set `VITE_API_BASE_URL` in Vercel Project Settings if the backend URL changes.
+
+For the first shared-team deployment, enable Vercel deployment protection or team-only access. See `DEPLOYMENT.md` for the full Vercel + Railway checklist.
 
 ## Optional Evidence Assistant
 
