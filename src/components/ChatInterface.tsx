@@ -47,9 +47,19 @@ interface ChatInterfaceProps {
   onToggle: () => void;
   activeLayerNames: string[];
   activeLayersContext?: string;
+  openSettingsSignal?: number;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAddToMap, onStylePatch, onQueryPlan, isOpen, onToggle, activeLayerNames, activeLayersContext }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  onAddToMap,
+  onStylePatch,
+  onQueryPlan,
+  isOpen,
+  onToggle,
+  activeLayerNames,
+  activeLayersContext,
+  openSettingsSignal,
+}) => {
 
   const [showSettings, setShowSettings] = useState(false);
   const [message, setMessage] = useState('');
@@ -81,6 +91,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAddToMap, onStylePatch,
 
   // Scroll to bottom on new messages
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isLoading]);
+
+  useEffect(() => {
+    if (openSettingsSignal) setShowSettings(true);
+  }, [openSettingsSignal]);
 
   // @mention filtering
   const filteredLayers = activeLayerNames.filter(name =>
