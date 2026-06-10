@@ -15,6 +15,7 @@ import DataTable from './components/DataTable';
 import Catalog from './components/Catalog';
 import LegendPanel from './components/LegendPanel';
 import RepositoryWorkbench from './components/RepositoryWorkbench';
+import TutorialModal from './components/TutorialModal';
 import { API_BASE_URL } from './config';
 import './App.css';
 
@@ -89,6 +90,8 @@ function App() {
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [isRepositoryOpen, setIsRepositoryOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [activeTutorialTarget, setActiveTutorialTarget] = useState<string | null>(null);
   const [windowPositions, setWindowPositions] = useState<Record<string, {x: number, y: number, w: number, h: number}>>({});
   const [baseMapStyle, setBaseMapStyle] = useState<string | any>('https://tiles.openfreemap.org/styles/dark');
 
@@ -112,6 +115,30 @@ function App() {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isChatOpen]);
+
+  useEffect(() => {
+    if (!isRepositoryOpen) return;
+    const disabled = localStorage.getItem('tapa-workbench:tutorial-autostart-disabled') === 'true';
+    if (disabled) return;
+    const timer = window.setTimeout(() => setIsTutorialOpen(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [isRepositoryOpen]);
+
+  useEffect(() => {
+    if (isRepositoryOpen) return;
+    setIsTutorialOpen(false);
+    setActiveTutorialTarget(null);
+  }, [isRepositoryOpen]);
+
+  const completeTutorial = useCallback(() => {
+    localStorage.setItem('tapa-workbench:tutorial-completed', 'true');
+    localStorage.setItem('tapa-workbench:tutorial-version', '2');
+    setIsTutorialOpen(false);
+  }, []);
+
+  const handleTutorialAction = useCallback((target: string) => {
+    window.dispatchEvent(new CustomEvent('tapa-workbench:tutorial-action', { detail: { target } }));
+  }, []);
 
   // Sync Data and Color Scales
   useEffect(() => {
@@ -1342,6 +1369,7 @@ function App() {
         >
           <span className="text-[10px] font-black text-blue-600 transition-transform group-active:scale-90">{viewState.pitch === 0 ? '3D' : '2D'}</span>
         </button>
+
       </div>
 
       {showTableOverlay && openTableLayerIds.length > 0 && (
@@ -1370,7 +1398,12 @@ function App() {
       )}
 
       {isRepositoryOpen && (
-        <RepositoryWorkbench onClose={() => setIsRepositoryOpen(false)} />
+        <RepositoryWorkbench
+          onClose={() => setIsRepositoryOpen(false)}
+          onOpenTutorial={() => setIsTutorialOpen(true)}
+          activeTutorialTarget={activeTutorialTarget}
+          onTutorialAction={handleTutorialAction}
+        />
       )}
 
       {detailWindows.map(window => {
@@ -1562,6 +1595,15 @@ function App() {
           activeLayersContext={activeLayersContext}
         />
       </div>
+
+      {isRepositoryOpen && (
+      <TutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        onComplete={completeTutorial}
+        onTargetChange={setActiveTutorialTarget}
+      />
+      )}
 
     </div>
   );
