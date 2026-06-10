@@ -14,7 +14,7 @@ Output directory: dist
 Set this environment variable in Vercel:
 
 ```env
-VITE_API_BASE_URL=https://<railway-backend-domain>/api/v1
+VITE_API_BASE_URL=https://tapa-research-workbench-backend-production.up.railway.app/api/v1
 ```
 
 Use Vercel deployment protection or team-only access for the first shared-team deployment.

@@ -114,12 +114,16 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
   }, [initialFocus, focusSignal]);
 
   const buildRepositoryUrls = useCallback((path: string) => {
+    if (!API_BASE_URL) return [];
     return [`${API_BASE_URL}/repository${path}`, `${API_BASE_URL}${path}`];
   }, []);
 
   const repositoryFetch = useCallback(
     async (path: string, init?: RequestInit) => {
       const urls = buildRepositoryUrls(path);
+      if (urls.length === 0) {
+        throw new Error('VITE_API_BASE_URL is not configured for this deployment.');
+      }
       let lastResponse: Response | null = null;
       for (const url of urls) {
         const response = await fetch(url, init);
@@ -189,12 +193,12 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
 
   const evidenceAssistantReady = localAiStatus === 'ready';
   const localAiMessage = {
-    idle: 'Start Local model to use Assisted Review.',
-    checking: 'Checking Local model...',
-    ready: 'Local model is ready.',
-    missing: 'Local model setup is incomplete. Please run the setup script again.',
-    'not-running': 'Local model is not running.',
-    blocked: 'The browser could not connect to Local model. Please run the setup script again and allow local access if asked.',
+    idle: 'Start local models on this computer to use Assisted Review.',
+    checking: 'Checking local models on this computer...',
+    ready: 'Local models are ready on this computer.',
+    missing: 'Local model setup is incomplete on this computer. Please run setup again.',
+    'not-running': 'Local models are not running on this computer.',
+    blocked: 'This browser could not connect to local models on this computer. Run setup here and allow local browser access if asked.',
   }[localAiStatus];
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();

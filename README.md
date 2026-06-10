@@ -34,7 +34,7 @@ VITE_API_BASE_URL=http://localhost:8000/api/v1
 For production/Vercel, set the same variable to the deployed backend API:
 
 ```env
-VITE_API_BASE_URL=https://<railway-backend-domain>/api/v1
+VITE_API_BASE_URL=https://tapa-research-workbench-backend-production.up.railway.app/api/v1
 ```
 
 ## Deploying to Vercel

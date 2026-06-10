@@ -99,7 +99,7 @@ export default function TutorialModal({
       {
         title: 'Enable assisted review',
         target: 'ai-setup',
-        body: 'For the shared online app, uploads, extraction, observations, exact search, and reports work without local models. Assisted review uses local Ollama models for embeddings, retrieval answers, and image captions when a model host is available.',
+        body: 'For the shared online app, uploads, extraction, observations, exact search, and reports use the Railway backend. Assisted review needs local Ollama models running on the computer currently using the app.',
         checklist: ['nomic-embed-text for embeddings', 'llama3.1 for retrieval answers', 'llava for image captions'],
         actions: [
           { label: 'Check local AI', onClick: () => void checkOllamaConnection(), variant: 'secondary' },
@@ -220,12 +220,12 @@ export default function TutorialModal({
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
   const ollamaStatusLabel = {
-    idle: 'Ready to check local Ollama',
-    checking: 'Checking local Ollama',
-    connected: 'Local AI Assistant is ready',
-    missing: 'Local AI setup is incomplete. Please run the setup script again.',
-    'not-connected': 'Ollama responded with an error',
-    blocked: 'Could not check Ollama from this browser',
+    idle: 'Ready to check this computer',
+    checking: 'Checking local models on this computer',
+    connected: 'Local models are ready on this computer',
+    missing: 'Local model setup is incomplete on this computer',
+    'not-connected': 'Local Ollama responded with an error',
+    blocked: 'Could not reach local models from this browser',
   }[ollamaStatus];
   const panelPositionClass = ['metadata', 'extraction', 'text-observations'].includes(step.target)
     ? 'left-4 top-20'
