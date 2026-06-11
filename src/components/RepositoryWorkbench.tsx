@@ -78,8 +78,6 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
   const [searchReport, setSearchReport] = useState<SearchReport | null>(null);
   const [showSearchReportModal, setShowSearchReportModal] = useState(false);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
-  const [localAiStatus, setLocalAiStatus] = useState<'idle' | 'checking' | 'ready' | 'missing' | 'not-running' | 'blocked'>('idle');
-  const [showLocalAiSetupActions, setShowLocalAiSetupActions] = useState(false);
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
@@ -170,36 +168,11 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
     ).length;
   }, [observations]);
 
-  const checkLocalAi = useCallback(async () => {
-    setLocalAiStatus('checking');
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 3500);
-    try {
-      const response = await fetch('http://localhost:11434/api/tags', { signal: controller.signal });
-      if (!response.ok) {
-        setLocalAiStatus('not-running');
-        return;
-      }
-      const data = await response.json();
-      const names = (data.models || []).map((model: { name?: string }) => String(model.name || '').toLowerCase());
-      const hasModel = (model: string) => names.some((name: string) => name === model || name.startsWith(`${model}:`));
-      setLocalAiStatus(hasModel('nomic-embed-text') && hasModel('llama3.1') && hasModel('llava') ? 'ready' : 'missing');
-    } catch {
-      setLocalAiStatus('blocked');
-    } finally {
-      window.clearTimeout(timeout);
-    }
-  }, []);
-
-  const evidenceAssistantReady = localAiStatus === 'ready';
-  const localAiMessage = {
-    idle: 'Start local models on this computer to use Assisted Review.',
-    checking: 'Checking local models on this computer...',
-    ready: 'Local models are ready on this computer.',
-    missing: 'Local model setup is incomplete on this computer. Please run setup again.',
-    'not-running': 'Local models are not running on this computer.',
-    blocked: 'This browser could not connect to local models on this computer. Run setup here and allow local browser access if asked.',
-  }[localAiStatus];
+  const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
+  const assistedReviewMessage = aiStatus?.status_message || 'Checking hosted model service for assisted review...';
+  const assistedReviewDetail = evidenceAssistantReady
+    ? 'Hosted for this MVP. Nothing needs to run on this computer.'
+    : 'Exact search, uploads, extraction, observations, and downloads still work while assisted review is unavailable.';
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -1539,64 +1512,29 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
               </div>
 
               <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-                localAiStatus === 'ready'
+                evidenceAssistantReady
                   ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700'
                   : 'border-slate-200 bg-slate-50 text-slate-500'
               }`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="font-bold">{localAiMessage}</div>
-                    {localAiStatus !== 'ready' && (
-                      <div className="mt-1 text-[11px] text-slate-400">
-                        Setup options are hidden until someone chooses to prepare this computer for local models.
-                      </div>
-                    )}
+                    <div className="font-bold">{assistedReviewMessage}</div>
+                    <div className={`mt-1 text-[11px] ${evidenceAssistantReady ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {assistedReviewDetail}
+                    </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowLocalAiSetupActions((value) => !value)}
+                    onClick={() => loadAiStatus().catch(() => {})}
                     className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wider hover:bg-slate-50 ${
-                      localAiStatus === 'ready'
+                      evidenceAssistantReady
                         ? 'border-emerald-100 bg-white/60 text-emerald-600'
                         : 'border-slate-200 bg-white text-slate-600'
                     }`}
                   >
-                    {showLocalAiSetupActions ? 'Hide Setup' : localAiStatus === 'ready' ? 'Setup' : 'Setup Options'}
+                    Refresh Status
                   </button>
                 </div>
-                {showLocalAiSetupActions && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <a
-                      href="/local-ai/setup-local-ai.command"
-                      download
-                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-                    >
-                      Download for macOS
-                    </a>
-                    <a
-                      href="/local-ai/setup-local-ai.bat"
-                      download
-                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-                    >
-                      Download for Windows
-                    </a>
-                    <a
-                      href="/local-ai/README.txt"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-lg border border-white/70 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
-                    >
-                      Read setup instructions
-                    </a>
-                    <button
-                      type="button"
-                      onClick={checkLocalAi}
-                      className="rounded-lg bg-slate-900 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-slate-700"
-                    >
-                      {localAiStatus === 'checking' ? 'Checking' : 'Check Local AI'}
-                    </button>
-                  </div>
-                )}
               </div>
 
               {showProcessReferencesPanel && (
@@ -1644,12 +1582,6 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
                       {isAskingCorpus ? 'Processing' : 'Process References'}
                     </button>
                   </div>
-                </div>
-              )}
-
-              {aiStatus && !aiStatus.provider_configured && (
-                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  {aiStatus.status_message || 'Semantic retrieval is inactive until Ollama is configured and running.'}
                 </div>
               )}
 
