@@ -844,27 +844,6 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
     }, 80);
   }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetImageId]);
 
-  const openPrintableReport = (
-    title: string,
-    summaryHtml: string,
-    bodyHtml: string,
-    footerText: string,
-    documentTitle = title,
-  ) => {
-    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText, documentTitle);
-
-    const printWindow = window.open('', '_blank', 'width=900,height=700');
-
-    if (!printWindow) {
-      setError('Popup was blocked. Please allow popups to download the PDF report.');
-      return;
-    }
-
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-  };
-
   const printHiddenReport = (
     title: string,
     summaryHtml: string,
@@ -984,7 +963,7 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
       })
       .join('');
 
-    openPrintableReport(
+    printHiddenReport(
       'Search Context Report',
       `
         <p><strong>Query:</strong> ${escapeHtml(searchReport.query)}</p>
@@ -1462,7 +1441,7 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
 
             <div
               data-tutorial-target="assisted-review"
-              className={`mb-3 rounded-xl border border-slate-200 bg-white p-3 ${tutorialTargetClass('assisted-review')} ${tutorialTargetClass('ai-setup')}`}
+              className={`mb-3 rounded-xl border border-slate-200 bg-white p-3 ${tutorialTargetClass('assisted-review')}`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2733,7 +2712,10 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
       {showSearchReportModal && searchReport && (
         <SearchReportModal
           searchReport={searchReport}
-          onDownloadPdf={downloadSearchReportPdf}
+          onDownloadPdf={() => {
+            setShowSearchReportModal(false);
+            window.setTimeout(downloadSearchReportPdf, 0);
+          }}
           onDownloadCsv={downloadSearchReportCsv}
           onClose={() => setShowSearchReportModal(false)}
           onSelectMaterial={(materialId) => {

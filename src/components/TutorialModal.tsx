@@ -1,16 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
-type TutorialAction = {
-  label: string;
-  onClick: () => void;
-  variant?: 'primary' | 'secondary' | 'quiet';
-};
-
 type TutorialStep = {
   title: string;
   body: string;
   target: string;
-  actions?: TutorialAction[];
   checklist?: string[];
   trustNote?: string;
 };
@@ -22,10 +15,6 @@ interface TutorialModalProps {
   onTargetChange: (target: string | null) => void;
 }
 
-type OllamaStatus = 'idle' | 'checking' | 'connected' | 'missing' | 'not-connected' | 'blocked';
-
-const DOWNLOADED_SETUP_COMMAND = './setup-local-ai.command or setup-local-ai.bat';
-
 export default function TutorialModal({
   isOpen,
   onClose,
@@ -36,7 +25,6 @@ export default function TutorialModal({
   const [disableAutoStart, setDisableAutoStart] = useState(
     () => localStorage.getItem('tapa-workbench:tutorial-autostart-disabled') === 'true',
   );
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('idle');
 
   const steps: TutorialStep[] = useMemo(
     () => [
@@ -95,18 +83,6 @@ export default function TutorialModal({
         title: 'Use exact corpus search',
         target: 'exact-search',
         body: 'Search Corpus performs exact text search across extracted source text. Use Search for quick review, and use Report beside it when you need a downloadable context report with matching passages.',
-      },
-      {
-        title: 'Enable assisted review',
-        target: 'ai-setup',
-        body: 'For the shared online app, uploads, extraction, observations, exact search, and reports use the Railway backend. Assisted review needs local Ollama models running on the computer currently using the app.',
-        checklist: ['nomic-embed-text for embeddings', 'llama3.1 for retrieval answers', 'llava for image captions'],
-        actions: [
-          { label: 'Check local AI', onClick: () => void checkOllamaConnection(), variant: 'secondary' },
-          { label: 'Download for macOS', onClick: () => downloadSetupScript('/local-ai/setup-local-ai.command', 'setup-local-ai.command'), variant: 'primary' },
-          { label: 'Download for Windows', onClick: () => downloadSetupScript('/local-ai/setup-local-ai.bat', 'setup-local-ai.bat'), variant: 'secondary' },
-          { label: 'Read setup instructions', onClick: () => window.open('/local-ai/README.txt', '_blank', 'noopener,noreferrer'), variant: 'quiet' },
-        ],
       },
       {
         title: 'Run assisted review',
@@ -172,42 +148,6 @@ export default function TutorialModal({
     onComplete();
   };
 
-  async function checkOllamaConnection() {
-    const storedUrl = localStorage.getItem('chat_ollama_url') || 'http://localhost:11434';
-    const baseUrl = storedUrl.replace(/\/$/, '');
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 3500);
-    setOllamaStatus('checking');
-
-    try {
-      const response = await fetch(`${baseUrl}/api/tags`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        setOllamaStatus('not-connected');
-        return;
-      }
-      const data = await response.json();
-      const names = (data.models || []).map((model: { name?: string }) => String(model.name || '').toLowerCase());
-      const hasModel = (model: string) => names.some((name: string) => name === model || name.startsWith(`${model}:`));
-      setOllamaStatus(hasModel('nomic-embed-text') && hasModel('llama3.1') && hasModel('llava') ? 'connected' : 'missing');
-    } catch {
-      setOllamaStatus('blocked');
-    } finally {
-      window.clearTimeout(timeout);
-    }
-  }
-
-  function downloadSetupScript(href: string, filename: string) {
-    const link = document.createElement('a');
-    link.href = href;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }
-
   function clickTutorialTarget(target: string) {
     return () => {
       const element = document.querySelector<HTMLElement>(`[data-tutorial-target="${target}"]`);
@@ -219,14 +159,8 @@ export default function TutorialModal({
 
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
-  const ollamaStatusLabel = {
-    idle: 'Ready to check this computer',
-    checking: 'Checking local models on this computer',
-    connected: 'Local models are ready on this computer',
-    missing: 'Local model setup is incomplete on this computer',
-    'not-connected': 'Local Ollama responded with an error',
-    blocked: 'Could not reach local models from this browser',
-  }[ollamaStatus];
+  const countedSteps = steps.slice(1);
+  const countedStepIndex = stepIndex - 1;
   const panelPositionClass = ['metadata', 'extraction', 'text-observations'].includes(step.target)
     ? 'left-4 top-20'
     : 'right-4 top-20';
@@ -243,7 +177,9 @@ export default function TutorialModal({
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-[10px] font-black uppercase tracking-widest text-blue-700">
-                Workbench walkthrough {stepIndex + 1} of {steps.length}
+                {stepIndex === 0
+                  ? 'Workbench walkthrough'
+                  : `Workbench walkthrough ${countedStepIndex + 1} of ${countedSteps.length}`}
               </div>
               <h2 id="tutorial-title" className="mt-1 text-base font-black leading-tight text-slate-900">
                 {step.title}
@@ -260,13 +196,13 @@ export default function TutorialModal({
               </svg>
             </button>
           </div>
-          <div className="mt-3 grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
-            {steps.map((_, index) => (
+          <div className="mt-3 grid gap-1" style={{ gridTemplateColumns: `repeat(${countedSteps.length}, minmax(0, 1fr))` }}>
+            {countedSteps.map((_, index) => (
               <button
                 key={index}
                 type="button"
-                onClick={() => setStepIndex(index)}
-                className={`h-1.5 rounded-full transition ${index <= stepIndex ? 'bg-blue-600' : 'bg-slate-200'}`}
+                onClick={() => setStepIndex(index + 1)}
+                className={`h-1.5 rounded-full transition ${index <= countedStepIndex ? 'bg-blue-600' : 'bg-slate-200'}`}
                 title={`Go to step ${index + 1}`}
               />
             ))}
@@ -275,12 +211,6 @@ export default function TutorialModal({
 
         <div className="max-h-[calc(100vh-15rem)] space-y-3 overflow-auto px-4 py-4">
           <p className="text-sm leading-relaxed text-slate-600">{step.body}</p>
-
-          {step.target === 'ai-setup' && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
-              {DOWNLOADED_SETUP_COMMAND}
-            </div>
-          )}
 
           {step.checklist && (
             <div className="rounded-lg border border-slate-200 bg-white p-3">
@@ -296,38 +226,12 @@ export default function TutorialModal({
             </div>
           )}
 
-          {step.target === 'ai-setup' && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-              {ollamaStatusLabel}
-            </div>
-          )}
-
           {step.trustNote && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
               {step.trustNote}
             </div>
           )}
 
-          {step.actions && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {step.actions.map((action) => (
-                <button
-                  key={action.label}
-                  type="button"
-                  onClick={action.onClick}
-                  className={`min-h-10 rounded-lg px-3 text-xs font-black uppercase tracking-wider transition ${
-                    action.variant === 'primary'
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-200/50 hover:bg-blue-700'
-                      : action.variant === 'quiet'
-                        ? 'border border-dashed border-slate-300 bg-slate-50 text-slate-600 hover:bg-white'
-                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="space-y-3 border-t border-slate-200 bg-white/90 px-4 py-3">
