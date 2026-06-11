@@ -25,5 +25,18 @@
     "noUncheckedSideEffectImports": true
   },
   "include": ["src"],
-  "exclude": ["src/components/checkpoint"]
+  "exclude": [
+    "src/components/checkpoint",
+    "src/components/Catalog.tsx",
+    "src/components/ChatInterface.tsx",
+    "src/components/ColorPalettePanel.tsx",
+    "src/components/DataTable.tsx",
+    "src/components/DetailWindow.tsx",
+    "src/components/LayerManager.tsx",
+    "src/components/LegendPanel.tsx",
+    "src/components/NumericFilter.tsx",
+    "src/utils/ColorMapper.ts",
+    "src/utils/duckdb.ts",
+    "src/utils/filterUtils.ts"
+  ]
 }

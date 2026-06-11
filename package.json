@@ -10,25 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@deck.gl-community/editable-layers": "^9.2.5",
-    "@deck.gl/geo-layers": "^9.2.6",
-    "@duckdb/duckdb-wasm": "^1.33.1-dev18.0",
-    "@loaders.gl/arrow": "^4.3.4",
     "@tailwindcss/postcss": "^4.1.18",
-    "@types/d3-interpolate": "^3.0.4",
-    "@types/d3-scale": "^4.0.9",
-    "apache-arrow": "^21.1.0",
-    "colorbrewer": "^1.6.1",
-    "d3-array": "^3.2.4",
-    "d3-interpolate": "^3.0.1",
-    "d3-scale": "^4.0.2",
-    "deck.gl": "^9.2.6",
-    "maplibre-gl": "^4.7.1",
     "papaparse": "^5.5.3",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-map-gl": "^8.1.0",
-    "react-rnd": "^10.5.2"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
