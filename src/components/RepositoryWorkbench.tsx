@@ -122,7 +122,7 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
     async (path: string, init?: RequestInit) => {
       const urls = buildRepositoryUrls(path);
       if (urls.length === 0) {
-        throw new Error('VITE_API_BASE_URL is not configured for this deployment.');
+        throw new Error('Backend API is not configured for this deployment.');
       }
       let lastResponse: Response | null = null;
       for (const url of urls) {
