@@ -168,7 +168,12 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
     ).length;
   }, [observations]);
 
-  const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
+  const chatAssistantReady = Boolean((aiStatus as any)?.chat_configured ?? aiStatus?.provider_configured);
+  const hasExplicitEmbeddingStatus = Boolean(aiStatus && 'embedding_configured' in aiStatus);
+  const embeddingAssistantReady = hasExplicitEmbeddingStatus
+    ? Boolean((aiStatus as any)?.embedding_configured)
+    : Boolean(aiStatus?.provider_configured);
+  const evidenceAssistantReady = Boolean(chatAssistantReady && embeddingAssistantReady);
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
