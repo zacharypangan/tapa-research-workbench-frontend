@@ -169,10 +169,12 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
   }, [observations]);
 
   const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
-  const assistedReviewMessage = aiStatus?.status_message || 'Checking hosted model service for assisted review...';
+  const assistedReviewMessage = evidenceAssistantReady
+    ? (aiStatus?.status_message || 'Hosted model service is ready for assisted review.')
+    : 'Assisted review is unavailable right now.';
   const assistedReviewDetail = evidenceAssistantReady
     ? 'Hosted for this MVP. Nothing needs to run on this computer.'
-    : 'Exact search, uploads, extraction, observations, and downloads still work while assisted review is unavailable.';
+    : 'Exact search, uploads, extraction, observations, and downloads still work.';
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -201,9 +203,14 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
       throw new Error(message);
     }
     const data = await response.json();
-    setMaterials(data.materials || []);
-    if (!selectedId && data.materials?.[0]) {
-      setSelectedId(data.materials[0].id);
+    const nextMaterials = data.materials || [];
+    setMaterials(nextMaterials);
+    if (nextMaterials.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !nextMaterials.some((material: Material) => material.id === selectedId)) {
+      setSelectedId(nextMaterials[0].id);
     }
   }, [repositoryFetch, search, selectedId, statusFilter]);
 
@@ -268,12 +275,9 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
   }, [loadAiStatus, repositoryFetch]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      loadMaterials().catch((err) => {
-        setError(getErrorMessage(err, 'Failed to load repository'));
-      });
-    }, 200);
-    return () => window.clearTimeout(timer);
+    loadMaterials().catch((err) => {
+      setError(getErrorMessage(err, 'Failed to load repository'));
+    });
   }, [loadMaterials]);
 
   useEffect(() => {
@@ -2000,9 +2004,15 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
 
           <aside
             data-tutorial-target="metadata"
-            className={`min-h-0 border-l border-slate-200 bg-white overflow-auto ${tutorialTargetClass('metadata')}`}
+            className={`min-h-0 border-l border-slate-200 bg-white overflow-auto ${
+              activeTutorialTarget === 'extraction' ? 'relative z-[90]' : ''
+            } ${tutorialTargetClass('metadata')}`}
           >
-            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-5 py-4">
+            <div
+              className={`sticky top-0 border-b border-slate-200 bg-white px-5 py-4 ${
+                activeTutorialTarget === 'extraction' ? 'z-[91]' : 'z-10'
+              }`}
+            >
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">
