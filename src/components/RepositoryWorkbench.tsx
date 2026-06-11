@@ -169,12 +169,6 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
   }, [observations]);
 
   const evidenceAssistantReady = Boolean(aiStatus?.provider_configured);
-  const assistedReviewMessage = evidenceAssistantReady
-    ? (aiStatus?.status_message || 'Hosted model service is ready for assisted review.')
-    : 'Assisted review is unavailable right now.';
-  const assistedReviewDetail = evidenceAssistantReady
-    ? 'Hosted for this MVP. Nothing needs to run on this computer.'
-    : 'Exact search, uploads, extraction, observations, and downloads still work.';
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -1511,32 +1505,6 @@ export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTut
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                   >
                     Clear
-                  </button>
-                </div>
-              </div>
-
-              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-                evidenceAssistantReady
-                  ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700'
-                  : 'border-slate-200 bg-slate-50 text-slate-500'
-              }`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-bold">{assistedReviewMessage}</div>
-                    <div className={`mt-1 text-[11px] ${evidenceAssistantReady ? 'text-emerald-600' : 'text-slate-400'}`}>
-                      {assistedReviewDetail}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => loadAiStatus().catch(() => {})}
-                    className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wider hover:bg-slate-50 ${
-                      evidenceAssistantReady
-                        ? 'border-emerald-100 bg-white/60 text-emerald-600'
-                        : 'border-slate-200 bg-white text-slate-600'
-                    }`}
-                  >
-                    Refresh Status
                   </button>
                 </div>
               </div>
