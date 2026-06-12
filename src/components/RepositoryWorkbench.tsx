@@ -48,6 +48,13 @@ import type {
   SemanticSearchResponse,
 } from './repository/types';
 
+const WORKFLOW_STATUS_ORDER = [
+  'needs_metadata',
+  'ready_for_text_extraction',
+  'metadata_complete',
+  'needs_review',
+];
+
 export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -150,6 +157,16 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
       return acc;
     }, {});
   }, [materials, statuses]);
+
+  const queueStatuses = useMemo(() => {
+    const ordered = WORKFLOW_STATUS_ORDER.filter((status) => statuses.includes(status));
+    const remaining = statuses.filter(
+      (status) =>
+        !WORKFLOW_STATUS_ORDER.includes(status) &&
+        ((queueCounts[status] || 0) > 0 || statusFilter === status),
+    );
+    return [...ordered, ...remaining];
+  }, [queueCounts, statusFilter, statuses]);
 
   const observationTypeCounts = useMemo(() => {
     return observations.reduce<Record<string, number>>((acc, observation) => {
@@ -1329,7 +1346,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
               )}
             </div>
             <div className="mt-2 space-y-1">
-              {statuses.map((status) => (
+              {queueStatuses.map((status) => (
                 <button
                   key={status}
                   onClick={() => setStatusFilter(status)}
@@ -1978,6 +1995,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
 
                       <button
                         data-tutorial-target="extraction"
+                        data-tutorial-next-target="extraction"
                         type="button"
                         onClick={() => {
                           if (
@@ -2235,7 +2253,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                           activeTutorialTarget === 'extraction' ? '' : 'disabled:opacity-40'
                         } ${tutorialTargetClass('extraction')}`}
                       >
-                        View Content and Observations
+                        View Text and Observations
                       </button>
                   </div>
                 </div>

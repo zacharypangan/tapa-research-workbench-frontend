@@ -34,11 +34,11 @@ export const EMPTY_OBSERVATION_FORM = {
 };
 
 export const STATUS_LABELS: Record<string, string> = {
-  uploaded: 'Uploaded',
-  needs_metadata: 'Needs Metadata',
-  metadata_complete: 'Complete',
-  needs_review: 'Needs Review',
-  ready_for_text_extraction: 'Ready',
+  uploaded: 'Needs Triage',
+  needs_metadata: 'Describe Source',
+  ready_for_text_extraction: 'Ready to Extract',
+  metadata_complete: 'Annotate Evidence',
+  needs_review: 'Review Evidence',
 };
 
 export const EXTRACTION_STATUS_LABELS: Record<string, string> = {

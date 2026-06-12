@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type TutorialStep = {
   title: string;
@@ -13,6 +13,13 @@ const NEXT_ACTION_TARGETS = new Set([
   'content-button',
   'text-observations',
   'observation-save',
+  'image-observations',
+]);
+
+const BACK_ACTION_TARGETS = new Set([
+  'extraction',
+  'content-button',
+  'text-observations',
   'image-observations',
 ]);
 
@@ -33,6 +40,7 @@ export default function TutorialModal({
   const [disableAutoStart, setDisableAutoStart] = useState(
     () => localStorage.getItem('tapa-workbench:tutorial-autostart-disabled') === 'true',
   );
+  const ignoreTutorialActionRef = useRef(false);
 
   const steps: TutorialStep[] = useMemo(
     () => [
@@ -55,9 +63,9 @@ export default function TutorialModal({
         checklist: ['Set status for your review queue', 'Add human-reviewed keywords', 'Keep collection notes descriptive'],
       },
       {
-        title: 'Extract evidence',
+        title: 'Use View Text and Observations',
         target: 'extraction',
-        body: 'Run Extract after files or links are attached. Extraction creates text segments, discovered links, image evidence, OCR/captions, and run history. Use View Text / Links / Observations to inspect the result.',
+        body: 'Use the View Text and Observations button after extraction is available. This opens the source workspace where text segments, discovered links, image evidence, OCR/captions, observations, and extraction runs stay together.',
       },
       {
         title: 'Open annotation workspace',
@@ -97,7 +105,6 @@ export default function TutorialModal({
         target: 'assisted-review',
         body: 'Find Related References discovers semantically similar passages and images. Organize References groups evidence into review-ready themes. Process References answers a specific query using cited source passages.',
         checklist: ['Relationship: how two terms or practices connect', 'Compare: how sources differ', 'Process: steps or production context', 'Evidence Gap: what is well supported or missing'],
-        trustNote: 'Treat AI outputs as review aids. Check claims against the cited passages and images before using them in analysis or presentation materials.',
       },
     ],
     [],
@@ -119,6 +126,10 @@ export default function TutorialModal({
     const handleTutorialAction = (event: Event) => {
       const target = (event as CustomEvent<{ target?: string }>).detail?.target;
       if (!target || target !== steps[stepIndex]?.target) return;
+      if (ignoreTutorialActionRef.current) {
+        ignoreTutorialActionRef.current = false;
+        return;
+      }
       setStepIndex((current) => Math.min(steps.length - 1, current + 1));
     };
     window.addEventListener('tapa-workbench:tutorial-action', handleTutorialAction);
@@ -158,6 +169,7 @@ export default function TutorialModal({
 
   function triggerTutorialTarget(target: string, requireAction = false) {
     const actionable = document.querySelector<HTMLElement>(
+      `button:not(:disabled)[data-tutorial-next-target="${target}"], ` +
       `button:not(:disabled)[data-tutorial-target="${target}"], ` +
       `input:not(:disabled)[data-tutorial-target="${target}"], ` +
       `label[data-tutorial-target="${target}"]`,
@@ -184,6 +196,20 @@ export default function TutorialModal({
       return;
     }
     setStepIndex((current) => current + 1);
+  };
+
+  const goBack = () => {
+    if (stepIndex === 0) return;
+    const previousStep = steps[stepIndex - 1];
+    setStepIndex((current) => Math.max(0, current - 1));
+    if (BACK_ACTION_TARGETS.has(previousStep.target)) {
+      window.setTimeout(() => {
+        ignoreTutorialActionRef.current = true;
+        if (!triggerTutorialTarget(previousStep.target, true)) {
+          ignoreTutorialActionRef.current = false;
+        }
+      }, 0);
+    }
   };
 
   if (!isOpen) return null;
@@ -286,7 +312,7 @@ export default function TutorialModal({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
+                onClick={goBack}
                 disabled={stepIndex === 0}
                 className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 disabled:opacity-30"
               >
