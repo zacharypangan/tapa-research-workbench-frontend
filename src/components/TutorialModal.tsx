@@ -8,6 +8,14 @@ type TutorialStep = {
   trustNote?: string;
 };
 
+const NEXT_ACTION_TARGETS = new Set([
+  'extraction',
+  'content-button',
+  'text-observations',
+  'observation-save',
+  'image-observations',
+]);
+
 interface TutorialModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -148,12 +156,35 @@ export default function TutorialModal({
     onComplete();
   };
 
+  function triggerTutorialTarget(target: string, requireAction = false) {
+    const actionable = document.querySelector<HTMLElement>(
+      `button:not(:disabled)[data-tutorial-target="${target}"], ` +
+      `input:not(:disabled)[data-tutorial-target="${target}"], ` +
+      `label[data-tutorial-target="${target}"]`,
+    );
+    if (requireAction && !actionable) return false;
+    const element = actionable ?? document.querySelector<HTMLElement>(`[data-tutorial-target="${target}"]`);
+    if (!element) return false;
+    element.click();
+    return true;
+  }
+
   function clickTutorialTarget(target: string) {
     return () => {
-      const element = document.querySelector<HTMLElement>(`[data-tutorial-target="${target}"]`);
-      element?.click();
+      triggerTutorialTarget(target);
     };
   }
+
+  const goNext = () => {
+    if (isLastStep) {
+      finish();
+      return;
+    }
+    if (NEXT_ACTION_TARGETS.has(step.target) && triggerTutorialTarget(step.target, true)) {
+      return;
+    }
+    setStepIndex((current) => current + 1);
+  };
 
   if (!isOpen) return null;
 
@@ -263,7 +294,7 @@ export default function TutorialModal({
               </button>
               <button
                 type="button"
-                onClick={() => (isLastStep ? finish() : setStepIndex((current) => current + 1))}
+                onClick={goNext}
                 className="h-9 rounded-lg bg-slate-900 px-3 text-xs font-black uppercase tracking-wider text-white hover:bg-slate-800"
               >
                 {isLastStep ? 'Finish' : 'Next'}

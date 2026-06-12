@@ -1987,6 +1987,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                             return;
                           }
                           extractMaterialText(selectedMaterial.id, (selectedMaterial.segment_count ?? 0) > 0);
+                          notifyTutorialAction('extraction');
                         }}
                         disabled={
                           activeTutorialTarget !== 'extraction' &&
@@ -2227,6 +2228,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                             selectedMaterial.id,
                             observations.length > 0 ? 'observations' : 'segments',
                           );
+                          notifyTutorialAction('extraction');
                         }}
                         disabled={activeTutorialTarget !== 'extraction' && !extractedPreview}
                         className={`w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50 ${
