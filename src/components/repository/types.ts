@@ -42,7 +42,6 @@ export interface Material {
 }
 
 export interface RepositoryWorkbenchProps {
-  onClose: () => void;
   onOpenTutorial?: () => void;
   activeTutorialTarget?: string | null;
   onTutorialAction?: (target: string) => void;

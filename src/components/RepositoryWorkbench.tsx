@@ -48,7 +48,7 @@ import type {
   SemanticSearchResponse,
 } from './repository/types';
 
-export default function RepositoryWorkbench({ onClose, onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
+export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);

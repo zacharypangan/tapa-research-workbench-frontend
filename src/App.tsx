@@ -27,7 +27,6 @@ function App() {
   return (
     <div className="standalone-workbench">
       <RepositoryWorkbench
-        onClose={() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })}
         onOpenTutorial={() => setIsTutorialOpen(true)}
         activeTutorialTarget={activeTutorialTarget}
         onTutorialAction={handleTutorialAction}
