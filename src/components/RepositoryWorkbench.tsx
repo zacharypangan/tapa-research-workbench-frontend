@@ -40,6 +40,11 @@ import type {
   AskCorpusResponse,
   ExtractedPreview,
   ImageEvidence,
+  KnowledgeGraphBuildResult,
+  KnowledgeGraphEdge,
+  KnowledgeGraphMap,
+  KnowledgeGraphNetwork,
+  KnowledgeGraphTimeline,
   Material,
   Observation,
   RepositoryWorkbenchProps,
@@ -88,6 +93,14 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
+  const [knowledgeGraphNetwork, setKnowledgeGraphNetwork] = useState<KnowledgeGraphNetwork | null>(null);
+  const [knowledgeGraphTimeline, setKnowledgeGraphTimeline] = useState<KnowledgeGraphTimeline | null>(null);
+  const [knowledgeGraphMap, setKnowledgeGraphMap] = useState<KnowledgeGraphMap | null>(null);
+  const [knowledgeGraphBuild, setKnowledgeGraphBuild] = useState<KnowledgeGraphBuildResult | null>(null);
+  const [knowledgeGraphTab, setKnowledgeGraphTab] = useState<'network' | 'timeline' | 'map'>('network');
+  const [isBuildingKnowledgeGraph, setIsBuildingKnowledgeGraph] = useState(false);
+  const [isLoadingKnowledgeGraph, setIsLoadingKnowledgeGraph] = useState(false);
+  const [reviewingGraphEdgeId, setReviewingGraphEdgeId] = useState<string | null>(null);
   const [showProcessReferencesPanel, setShowProcessReferencesPanel] = useState(false);
   const [isRunningSemanticSearch, setIsRunningSemanticSearch] = useState(false);
   const [isAskingCorpus, setIsAskingCorpus] = useState(false);
@@ -205,6 +218,9 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     setSemanticResults(null);
     setAskCorpusResult(null);
     setAiEvidenceReport(null);
+    setKnowledgeGraphNetwork(null);
+    setKnowledgeGraphTimeline(null);
+    setKnowledgeGraphMap(null);
     setCitedQuestion('');
     setShowProcessReferencesPanel(false);
   };
@@ -917,6 +933,202 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     URL.revokeObjectURL(url);
   };
 
+  const downloadTextFile = (filename: string, content: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadKnowledgeGraph = useCallback(async () => {
+    setIsLoadingKnowledgeGraph(true);
+    setError(null);
+
+    try {
+      const query = fullTextQuery.trim() || citedQuestion.trim();
+      const networkParams = new URLSearchParams({ limit: '80' });
+      const timelineParams = new URLSearchParams({ limit: '100' });
+      const mapParams = new URLSearchParams({ limit: '100' });
+      if (query.length >= 2) {
+        networkParams.set('query', query);
+        timelineParams.set('query', query);
+        mapParams.set('query', query);
+      }
+
+      const [networkResponse, timelineResponse, mapResponse] = await Promise.all([
+        repositoryFetch(`/graph/network?${networkParams}`),
+        repositoryFetch(`/graph/timeline?${timelineParams}`),
+        repositoryFetch(`/graph/map?${mapParams}`),
+      ]);
+
+      if (!networkResponse.ok) {
+        const message = await parseErrorResponse(networkResponse, 'Knowledge graph network failed');
+        throw new Error(message);
+      }
+      if (!timelineResponse.ok) {
+        const message = await parseErrorResponse(timelineResponse, 'Knowledge graph timeline failed');
+        throw new Error(message);
+      }
+      if (!mapResponse.ok) {
+        const message = await parseErrorResponse(mapResponse, 'Knowledge graph map failed');
+        throw new Error(message);
+      }
+
+      setKnowledgeGraphNetwork(await networkResponse.json());
+      setKnowledgeGraphTimeline(await timelineResponse.json());
+      setKnowledgeGraphMap(await mapResponse.json());
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Knowledge graph load failed'));
+    } finally {
+      setIsLoadingKnowledgeGraph(false);
+    }
+  }, [citedQuestion, fullTextQuery, repositoryFetch]);
+
+  const buildKnowledgeGraph = async () => {
+    setIsBuildingKnowledgeGraph(true);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch('/graph/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'Knowledge graph build failed');
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setKnowledgeGraphBuild(data);
+      await loadKnowledgeGraph();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Knowledge graph build failed'));
+    } finally {
+      setIsBuildingKnowledgeGraph(false);
+    }
+  };
+
+  const reviewKnowledgeGraphEdge = async (edgeId: string, reviewStatus: 'accepted' | 'rejected' | 'needs_review') => {
+    setReviewingGraphEdgeId(edgeId);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch(`/graph/edges/${edgeId}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_status: reviewStatus }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'Knowledge graph review failed');
+        throw new Error(message);
+      }
+
+      await loadKnowledgeGraph();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Knowledge graph review failed'));
+    } finally {
+      setReviewingGraphEdgeId(null);
+    }
+  };
+
+  const openGraphEvidenceRef = (ref: KnowledgeGraphEdge['evidence_ref']) => {
+    if (!ref.material_id) return;
+    if (ref.image_id) {
+      openAnnotationWorkspace(ref.material_id, 'images', null, ref.image_id);
+      return;
+    }
+    if (ref.segment_id) {
+      openAnnotationWorkspace(ref.material_id, 'segments', ref.segment_id);
+      return;
+    }
+    openAnnotationWorkspace(ref.material_id, ref.observation_id ? 'observations' : 'segments');
+  };
+
+  const openGraphEvidence = (edge: KnowledgeGraphEdge) => {
+    openGraphEvidenceRef(edge.evidence_ref || {});
+  };
+
+  const downloadKnowledgeGraphJson = () => {
+    if (!knowledgeGraphNetwork) return;
+    downloadTextFile(
+      `${buildReportFilename(fullTextQuery || 'knowledge_graph', 'assistedSearch')}_network.json`,
+      JSON.stringify(knowledgeGraphNetwork, null, 2),
+      'application/json;charset=utf-8',
+    );
+  };
+
+  const downloadKnowledgeGraphTimelineCsv = () => {
+    if (!knowledgeGraphTimeline) return;
+    const rows = [...knowledgeGraphTimeline.items, ...knowledgeGraphTimeline.unresolved].map((item) => [
+      item.time_label,
+      item.sort_year ?? '',
+      item.source_type,
+      item.source_label,
+      item.edge.review_status,
+      item.edge.confidence,
+      item.edge.evidence_ref.material_title || '',
+      item.edge.evidence_ref.page_ref || '',
+      item.edge.evidence_ref.source_locator || '',
+      item.edge.evidence_ref.snippet || '',
+    ]);
+    downloadCsvFile(`${buildReportFilename(fullTextQuery || 'knowledge_graph', 'assistedSearch')}_timeline.csv`, [
+      ['time_label', 'sort_year', 'source_type', 'source_label', 'review_status', 'confidence', 'material_title', 'page_ref', 'source_locator', 'snippet'],
+      ...rows,
+    ]);
+  };
+
+  const downloadKnowledgeGraphMapGeoJson = () => {
+    if (!knowledgeGraphMap) return;
+    downloadTextFile(
+      `${buildReportFilename(fullTextQuery || 'knowledge_graph', 'assistedSearch')}_map.geojson`,
+      JSON.stringify(knowledgeGraphMap.geojson, null, 2),
+      'application/geo+json;charset=utf-8',
+    );
+  };
+
+  const downloadKnowledgeGraphMapCsv = () => {
+    if (!knowledgeGraphMap) return;
+    const resolvedRows = knowledgeGraphMap.geojson.features.map((feature) => [
+      feature.properties.place_label,
+      feature.geometry.coordinates[1],
+      feature.geometry.coordinates[0],
+      feature.properties.source_type,
+      feature.properties.source_label,
+      feature.properties.review_status,
+      feature.properties.confidence,
+      feature.properties.evidence_ref.material_title || '',
+      feature.properties.evidence_ref.page_ref || '',
+      feature.properties.evidence_ref.source_locator || '',
+      feature.properties.evidence_ref.snippet || '',
+    ]);
+    const unresolvedRows = knowledgeGraphMap.unresolved.map((item) => [
+      item.place_label,
+      '',
+      '',
+      item.source_type,
+      item.source_label,
+      item.edge.review_status,
+      item.edge.confidence,
+      item.edge.evidence_ref.material_title || '',
+      item.edge.evidence_ref.page_ref || '',
+      item.edge.evidence_ref.source_locator || '',
+      item.edge.evidence_ref.snippet || '',
+    ]);
+    downloadCsvFile(`${buildReportFilename(fullTextQuery || 'knowledge_graph', 'assistedSearch')}_map.csv`, [
+      ['place_label', 'latitude', 'longitude', 'source_type', 'source_label', 'review_status', 'confidence', 'material_title', 'page_ref', 'source_locator', 'snippet'],
+      ...resolvedRows,
+      ...unresolvedRows,
+    ]);
+  };
+
   const buildReportFilename = (query: string, suffix: 'corpusSearch' | 'assistedSearch') => {
     const token = query
       .trim()
@@ -1266,6 +1478,72 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   const imageEvidenceUrl = (image: ImageEvidence) => {
     if (image.image_url.startsWith('http')) return image.image_url;
     return `${API_BASE_URL}${image.image_url}`;
+  };
+
+  const visibleGraphNodes = useMemo(
+    () => (knowledgeGraphNetwork?.nodes || []).slice(0, 24),
+    [knowledgeGraphNetwork],
+  );
+
+  const graphNodeLookup = useMemo(
+    () => new Map((knowledgeGraphNetwork?.nodes || []).map((node) => [node.id, node])),
+    [knowledgeGraphNetwork],
+  );
+
+  const visibleGraphNodeIds = useMemo(
+    () => new Set(visibleGraphNodes.map((node) => node.id)),
+    [visibleGraphNodes],
+  );
+
+  const visibleGraphEdges = useMemo(
+    () =>
+      (knowledgeGraphNetwork?.edges || [])
+        .filter((edge) => visibleGraphNodeIds.has(edge.source_node_id) && visibleGraphNodeIds.has(edge.target_node_id))
+        .slice(0, 60),
+    [knowledgeGraphNetwork, visibleGraphNodeIds],
+  );
+
+  const graphNodePositions = useMemo(() => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    const centerX = 180;
+    const centerY = 110;
+    const radius = visibleGraphNodes.length > 10 ? 86 : 72;
+    visibleGraphNodes.forEach((node, index) => {
+      if (visibleGraphNodes.length === 1) {
+        positions[node.id] = { x: centerX, y: centerY };
+        return;
+      }
+      const angle = (Math.PI * 2 * index) / visibleGraphNodes.length - Math.PI / 2;
+      positions[node.id] = {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius,
+      };
+    });
+    return positions;
+  }, [visibleGraphNodes]);
+
+  const graphNodeColor = (nodeType: string) => {
+    if (nodeType === 'material') return '#2563eb';
+    if (nodeType === 'concept' || nodeType === 'keyword') return '#059669';
+    if (nodeType === 'place') return '#d97706';
+    if (nodeType === 'time_reference') return '#7c3aed';
+    if (nodeType === 'observation') return '#0f766e';
+    if (nodeType === 'image') return '#be123c';
+    return '#64748b';
+  };
+
+  const graphStatusClass = (status: string) => {
+    if (status === 'accepted') return 'bg-emerald-100 text-emerald-700';
+    if (status === 'rejected') return 'bg-rose-100 text-rose-700';
+    if (status === 'needs_review') return 'bg-amber-100 text-amber-800';
+    return 'bg-slate-100 text-slate-600';
+  };
+
+  const graphMethodClass = (method: string) => {
+    if (method.includes('human')) return 'bg-blue-100 text-blue-700';
+    if (method.includes('metadata')) return 'bg-slate-100 text-slate-600';
+    if (method.includes('cooccurrence') || method.includes('pattern')) return 'bg-purple-100 text-purple-700';
+    return 'bg-teal-100 text-teal-700';
   };
 
   return (
@@ -1839,6 +2117,310 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                   ))}
                 </div>
               )}
+
+              <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Knowledge Graph
+                    </div>
+                    {knowledgeGraphBuild && (
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        {knowledgeGraphBuild.node_count} nodes · {knowledgeGraphBuild.edge_count} edges
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={buildKnowledgeGraph}
+                      disabled={isBuildingKnowledgeGraph}
+                      className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      {isBuildingKnowledgeGraph ? 'Building' : 'Build'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={loadKnowledgeGraph}
+                      disabled={isLoadingKnowledgeGraph}
+                      className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      {isLoadingKnowledgeGraph ? 'Loading' : 'Load'}
+                    </button>
+                    <details className="relative">
+                      <summary className="h-8 cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50">
+                        Export
+                      </summary>
+                      <div className="absolute right-0 z-10 mt-2 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={downloadKnowledgeGraphJson}
+                          disabled={!knowledgeGraphNetwork}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        >
+                          Network JSON
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadKnowledgeGraphTimelineCsv}
+                          disabled={!knowledgeGraphTimeline}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        >
+                          Timeline CSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadKnowledgeGraphMapGeoJson}
+                          disabled={!knowledgeGraphMap}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        >
+                          Map GeoJSON
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadKnowledgeGraphMapCsv}
+                          disabled={!knowledgeGraphMap}
+                          className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        >
+                          Map CSV
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    ['network', 'Network'],
+                    ['timeline', 'Timeline'],
+                    ['map', 'Map'],
+                  ].map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setKnowledgeGraphTab(tab as 'network' | 'timeline' | 'map')}
+                      className={`rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                        knowledgeGraphTab === tab
+                          ? 'bg-slate-900 text-white'
+                          : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {!knowledgeGraphNetwork && !isLoadingKnowledgeGraph && (
+                  <div className="mt-3 rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
+                    Build or load the graph to show source-linked semantic, temporal, and spatial evidence.
+                  </div>
+                )}
+
+                {knowledgeGraphTab === 'network' && knowledgeGraphNetwork && (
+                  <div className="mt-3 grid gap-3 xl:grid-cols-[380px_1fr]">
+                    <div className="rounded-lg border border-slate-100 bg-white p-2">
+                      <svg viewBox="0 0 360 220" className="h-[220px] w-full">
+                        {visibleGraphEdges.map((edge) => {
+                          const source = graphNodePositions[edge.source_node_id];
+                          const target = graphNodePositions[edge.target_node_id];
+                          if (!source || !target) return null;
+                          return (
+                            <line
+                              key={edge.id}
+                              x1={source.x}
+                              y1={source.y}
+                              x2={target.x}
+                              y2={target.y}
+                              stroke={edge.review_status === 'needs_review' ? '#f59e0b' : '#cbd5e1'}
+                              strokeWidth={Math.max(1, edge.weight * 2)}
+                              opacity={0.8}
+                            />
+                          );
+                        })}
+                        {visibleGraphNodes.map((node) => {
+                          const position = graphNodePositions[node.id];
+                          if (!position) return null;
+                          return (
+                            <g key={node.id}>
+                              <circle
+                                cx={position.x}
+                                cy={position.y}
+                                r={node.node_type === 'material' ? 10 : 7}
+                                fill={graphNodeColor(node.node_type)}
+                              >
+                                <title>{node.label}</title>
+                              </circle>
+                              <text
+                                x={position.x}
+                                y={position.y + 18}
+                                textAnchor="middle"
+                                className="fill-slate-500 text-[9px] font-bold"
+                              >
+                                {truncateText(node.label, 18)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-xs text-slate-500">{knowledgeGraphNetwork.evidence_note}</div>
+                      {visibleGraphEdges.length === 0 && (
+                        <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
+                          No graph edges matched this query yet.
+                        </div>
+                      )}
+                      {visibleGraphEdges.slice(0, 10).map((edge) => {
+                        const source = graphNodeLookup.get(edge.source_node_id);
+                        const target = graphNodeLookup.get(edge.target_node_id);
+                        return (
+                          <div key={edge.id} className="rounded-lg border border-slate-100 bg-white p-3">
+                            <button
+                              type="button"
+                              onClick={() => openGraphEvidence(edge)}
+                              className="block w-full text-left hover:text-blue-700"
+                            >
+                              <div className="text-xs font-black text-slate-700">
+                                {source?.label || 'Source'} -&gt; {target?.label || 'Target'}
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-400">
+                                {edge.evidence_ref.material_title || edge.evidence_ref.source || 'Graph evidence'}
+                                {edge.evidence_ref.page_ref ? ` · ${edge.evidence_ref.page_ref}` : ''}
+                              </div>
+                              {edge.evidence_ref.snippet && (
+                                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                                  {highlightSearchTerms(edge.evidence_ref.snippet, activeQueryTerms)}
+                                </div>
+                              )}
+                            </button>
+                            <div className="mt-2 flex flex-wrap items-center gap-1">
+                              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                {formatEvidenceLabel(edge.edge_type)}
+                              </span>
+                              <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(edge.review_status)}`}>
+                                {formatEvidenceLabel(edge.review_status)}
+                              </span>
+                              <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphMethodClass(edge.extraction_method)}`}>
+                                {formatEvidenceLabel(edge.extraction_method)}
+                              </span>
+                              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                {(edge.confidence * 100).toFixed(0)} confidence
+                              </span>
+                              {edge.review_status === 'needs_review' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => reviewKnowledgeGraphEdge(edge.id, 'accepted')}
+                                    disabled={reviewingGraphEdgeId === edge.id}
+                                    className="rounded-full bg-emerald-600 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white disabled:opacity-40"
+                                  >
+                                    Accept
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => reviewKnowledgeGraphEdge(edge.id, 'rejected')}
+                                    disabled={reviewingGraphEdgeId === edge.id}
+                                    className="rounded-full bg-rose-600 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white disabled:opacity-40"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {knowledgeGraphTab === 'timeline' && knowledgeGraphTimeline && (
+                  <div className="mt-3 space-y-2">
+                    <div className="text-xs text-slate-500">{knowledgeGraphTimeline.evidence_note}</div>
+                    {[...knowledgeGraphTimeline.items, ...knowledgeGraphTimeline.unresolved].slice(0, 12).map((item, index) => (
+                      <button
+                        key={`${item.edge.id}-${index}`}
+                        type="button"
+                        onClick={() => openGraphEvidence(item.edge)}
+                        className="block w-full rounded-lg border border-slate-100 bg-white p-3 text-left hover:bg-blue-50"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-black text-slate-700">
+                            {item.time_label}
+                            {item.sort_year != null ? ` · ${item.sort_year}` : ' · unresolved'}
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(item.edge.review_status)}`}>
+                            {formatEvidenceLabel(item.edge.review_status)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {item.edge.evidence_ref.material_title || item.source_label}
+                          {item.edge.evidence_ref.page_ref ? ` · ${item.edge.evidence_ref.page_ref}` : ''}
+                        </div>
+                        {item.edge.evidence_ref.snippet && (
+                          <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                            {highlightSearchTerms(item.edge.evidence_ref.snippet, activeQueryTerms)}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                    {knowledgeGraphTimeline.items.length === 0 && knowledgeGraphTimeline.unresolved.length === 0 && (
+                      <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
+                        No timeline evidence matched this query yet.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {knowledgeGraphTab === 'map' && knowledgeGraphMap && (
+                  <div className="mt-3 space-y-2">
+                    <div className="text-xs text-slate-500">{knowledgeGraphMap.evidence_note}</div>
+                    {knowledgeGraphMap.geojson.features.slice(0, 8).map((feature) => (
+                      <button
+                        key={feature.properties.edge_id}
+                        type="button"
+                        onClick={() => openGraphEvidenceRef(feature.properties.evidence_ref)}
+                        className="block w-full rounded-lg border border-slate-100 bg-white p-3 text-left hover:bg-blue-50"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-black text-slate-700">{feature.properties.place_label}</div>
+                          <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                            {feature.geometry.coordinates[1].toFixed(4)}, {feature.geometry.coordinates[0].toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {feature.properties.evidence_ref.material_title || feature.properties.source_label}
+                          {feature.properties.evidence_ref.page_ref ? ` · ${feature.properties.evidence_ref.page_ref}` : ''}
+                        </div>
+                      </button>
+                    ))}
+                    {knowledgeGraphMap.unresolved.slice(0, 10).map((item) => (
+                      <button
+                        key={item.edge.id}
+                        type="button"
+                        onClick={() => openGraphEvidence(item.edge)}
+                        className="block w-full rounded-lg border border-amber-100 bg-amber-50 p-3 text-left hover:bg-amber-100"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-black text-amber-900">{item.place_label}</div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(item.edge.review_status)}`}>
+                            Unresolved
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-amber-700">
+                          {item.edge.evidence_ref.material_title || item.source_label}
+                          {item.edge.evidence_ref.page_ref ? ` · ${item.edge.evidence_ref.page_ref}` : ''}
+                        </div>
+                      </button>
+                    ))}
+                    {knowledgeGraphMap.geojson.features.length === 0 && knowledgeGraphMap.unresolved.length === 0 && (
+                      <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
+                        No spatial graph evidence matched this query yet.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">

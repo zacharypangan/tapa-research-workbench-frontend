@@ -272,3 +272,116 @@ export interface AIEvidenceReport {
   related_observations: Observation[];
   evidence_note?: string;
 }
+
+export type GraphReviewStatus = 'accepted' | 'rejected' | 'needs_review' | 'unreviewed';
+
+export interface KnowledgeGraphNode {
+  id: string;
+  node_type: string;
+  label: string;
+  normalized_label: string;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeGraphEvidenceRef {
+  material_id?: string;
+  material_title?: string;
+  segment_id?: number | string | null;
+  image_id?: string | null;
+  observation_id?: string | null;
+  page_ref?: string | null;
+  source_locator?: string | null;
+  source?: string;
+  snippet?: string;
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: string;
+  weight: number;
+  confidence: number;
+  evidence_ref: KnowledgeGraphEvidenceRef;
+  extraction_method: string;
+  review_status: GraphReviewStatus;
+  created_at: string;
+}
+
+export interface KnowledgeGraphNetwork {
+  query?: string | null;
+  material_id?: string | null;
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  summary: {
+    seed_count: number;
+    node_count: number;
+    edge_count: number;
+  };
+  evidence_note?: string;
+}
+
+export interface KnowledgeGraphTimelineItem {
+  time_label: string;
+  sort_year?: number | null;
+  source_node_id: string;
+  source_label: string;
+  source_type: string;
+  edge: KnowledgeGraphEdge;
+}
+
+export interface KnowledgeGraphTimeline {
+  query?: string | null;
+  material_id?: string | null;
+  items: KnowledgeGraphTimelineItem[];
+  unresolved: KnowledgeGraphTimelineItem[];
+  evidence_note?: string;
+}
+
+export interface KnowledgeGraphMapFeature {
+  type: 'Feature';
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
+  properties: {
+    place_label: string;
+    source_label: string;
+    source_type: string;
+    edge_id: string;
+    review_status: GraphReviewStatus;
+    confidence: number;
+    evidence_ref: KnowledgeGraphEvidenceRef;
+  };
+}
+
+export interface KnowledgeGraphMapItem {
+  place_label: string;
+  source_node_id: string;
+  source_label: string;
+  source_type: string;
+  edge: KnowledgeGraphEdge;
+}
+
+export interface KnowledgeGraphMap {
+  query?: string | null;
+  material_id?: string | null;
+  geojson: {
+    type: 'FeatureCollection';
+    features: KnowledgeGraphMapFeature[];
+  };
+  unresolved: KnowledgeGraphMapItem[];
+  evidence_note?: string;
+}
+
+export interface KnowledgeGraphBuildResult {
+  build_id: string;
+  scope: string;
+  material_id?: string | null;
+  status: string;
+  material_count: number;
+  node_count: number;
+  edge_count: number;
+}
