@@ -150,6 +150,8 @@ export interface SearchReport {
 
 export interface AIStatus {
   provider_configured: boolean;
+  chat_configured?: boolean;
+  embedding_configured?: boolean;
   embedding_model?: string;
   chat_model?: string;
   segment_count?: number;

@@ -33,6 +33,7 @@ import {
   truncateText,
 } from './repository/formatters';
 import { buildPrintableReportHtml } from './repository/printableReport';
+import { RepositoryGraphExplorer } from './repository/graph/RepositoryGraphExplorer';
 import { SearchReportModal } from './repository/SearchReportModal';
 import type {
   AIEvidenceReport,
@@ -216,10 +217,10 @@ export default function RepositoryWorkbench({
     ).length;
   }, [observations]);
 
-  const chatAssistantReady = Boolean((aiStatus as any)?.chat_configured ?? aiStatus?.provider_configured);
+  const chatAssistantReady = Boolean(aiStatus?.chat_configured ?? aiStatus?.provider_configured);
   const hasExplicitEmbeddingStatus = Boolean(aiStatus && 'embedding_configured' in aiStatus);
   const embeddingAssistantReady = hasExplicitEmbeddingStatus
-    ? Boolean((aiStatus as any)?.embedding_configured)
+    ? Boolean(aiStatus?.embedding_configured)
     : Boolean(aiStatus?.provider_configured);
   const evidenceAssistantReady = Boolean(chatAssistantReady && embeddingAssistantReady);
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
@@ -1499,48 +1500,6 @@ export default function RepositoryWorkbench({
     return `${API_BASE_URL}${image.image_url}`;
   };
 
-  const visibleGraphNodes = useMemo(
-    () => (knowledgeGraphNetwork?.nodes || []).slice(0, 24),
-    [knowledgeGraphNetwork],
-  );
-
-  const graphNodeLookup = useMemo(
-    () => new Map((knowledgeGraphNetwork?.nodes || []).map((node) => [node.id, node])),
-    [knowledgeGraphNetwork],
-  );
-
-  const visibleGraphNodeIds = useMemo(
-    () => new Set(visibleGraphNodes.map((node) => node.id)),
-    [visibleGraphNodes],
-  );
-
-  const visibleGraphEdges = useMemo(
-    () =>
-      (knowledgeGraphNetwork?.edges || [])
-        .filter((edge) => visibleGraphNodeIds.has(edge.source_node_id) && visibleGraphNodeIds.has(edge.target_node_id))
-        .slice(0, 60),
-    [knowledgeGraphNetwork, visibleGraphNodeIds],
-  );
-
-  const graphNodePositions = useMemo(() => {
-    const positions: Record<string, { x: number; y: number }> = {};
-    const centerX = 180;
-    const centerY = 110;
-    const radius = visibleGraphNodes.length > 10 ? 86 : 72;
-    visibleGraphNodes.forEach((node, index) => {
-      if (visibleGraphNodes.length === 1) {
-        positions[node.id] = { x: centerX, y: centerY };
-        return;
-      }
-      const angle = (Math.PI * 2 * index) / visibleGraphNodes.length - Math.PI / 2;
-      positions[node.id] = {
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
-      };
-    });
-    return positions;
-  }, [visibleGraphNodes]);
-
   const graphTimelineYears = useMemo(() => {
     const years = new Set<number>();
     (knowledgeGraphTimeline?.items || []).forEach((item) => {
@@ -1617,28 +1576,11 @@ export default function RepositoryWorkbench({
     });
   }, [filteredGraphMapFeatures]);
 
-  const graphNodeColor = (nodeType: string) => {
-    if (nodeType === 'material') return '#2563eb';
-    if (nodeType === 'concept' || nodeType === 'keyword') return '#059669';
-    if (nodeType === 'place') return '#d97706';
-    if (nodeType === 'time_reference') return '#7c3aed';
-    if (nodeType === 'observation') return '#0f766e';
-    if (nodeType === 'image') return '#be123c';
-    return '#64748b';
-  };
-
   const graphStatusClass = (status: string) => {
     if (status === 'accepted') return 'bg-emerald-100 text-emerald-700';
     if (status === 'rejected') return 'bg-rose-100 text-rose-700';
     if (status === 'needs_review') return 'bg-amber-100 text-amber-800';
     return 'bg-slate-100 text-slate-600';
-  };
-
-  const graphMethodClass = (method: string) => {
-    if (method.includes('human')) return 'bg-blue-100 text-blue-700';
-    if (method.includes('metadata')) return 'bg-slate-100 text-slate-600';
-    if (method.includes('cooccurrence') || method.includes('pattern')) return 'bg-purple-100 text-purple-700';
-    return 'bg-teal-100 text-teal-700';
   };
 
   const stageKnowledgeGraphMapLayer = () => {
@@ -2364,7 +2306,7 @@ export default function RepositoryWorkbench({
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
-                    ['network', 'Network'],
+                    ['network', 'Explorer'],
                     ['timeline', 'Timeline'],
                     ['map', 'Map'],
                   ].map(([tab, label]) => (
@@ -2383,127 +2325,17 @@ export default function RepositoryWorkbench({
                   ))}
                 </div>
 
-                {!knowledgeGraphNetwork && !isLoadingKnowledgeGraph && (
-                  <div className="mt-3 rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
-                    Build or load the graph to show source-linked semantic, temporal, and spatial evidence.
-                  </div>
-                )}
-
-                {knowledgeGraphTab === 'network' && knowledgeGraphNetwork && (
-                  <div className="mt-3 grid gap-3 xl:grid-cols-[380px_1fr]">
-                    <div className="rounded-lg border border-slate-100 bg-white p-2">
-                      <svg viewBox="0 0 360 220" className="h-[220px] w-full">
-                        {visibleGraphEdges.map((edge) => {
-                          const source = graphNodePositions[edge.source_node_id];
-                          const target = graphNodePositions[edge.target_node_id];
-                          if (!source || !target) return null;
-                          return (
-                            <line
-                              key={edge.id}
-                              x1={source.x}
-                              y1={source.y}
-                              x2={target.x}
-                              y2={target.y}
-                              stroke={edge.review_status === 'needs_review' ? '#f59e0b' : '#cbd5e1'}
-                              strokeWidth={Math.max(1, edge.weight * 2)}
-                              opacity={0.8}
-                            />
-                          );
-                        })}
-                        {visibleGraphNodes.map((node) => {
-                          const position = graphNodePositions[node.id];
-                          if (!position) return null;
-                          return (
-                            <g key={node.id}>
-                              <circle
-                                cx={position.x}
-                                cy={position.y}
-                                r={node.node_type === 'material' ? 10 : 7}
-                                fill={graphNodeColor(node.node_type)}
-                              >
-                                <title>{node.label}</title>
-                              </circle>
-                              <text
-                                x={position.x}
-                                y={position.y + 18}
-                                textAnchor="middle"
-                                className="fill-slate-500 text-[9px] font-bold"
-                              >
-                                {truncateText(node.label, 18)}
-                              </text>
-                            </g>
-                          );
-                        })}
-                      </svg>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-xs text-slate-500">{knowledgeGraphNetwork.evidence_note}</div>
-                      {visibleGraphEdges.length === 0 && (
-                        <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
-                          No graph edges matched this query yet.
-                        </div>
-                      )}
-                      {visibleGraphEdges.slice(0, 10).map((edge) => {
-                        const source = graphNodeLookup.get(edge.source_node_id);
-                        const target = graphNodeLookup.get(edge.target_node_id);
-                        return (
-                          <div key={edge.id} className="rounded-lg border border-slate-100 bg-white p-3">
-                            <button
-                              type="button"
-                              onClick={() => openGraphEvidence(edge)}
-                              className="block w-full text-left hover:text-blue-700"
-                            >
-                              <div className="text-xs font-black text-slate-700">
-                                {source?.label || 'Source'} -&gt; {target?.label || 'Target'}
-                              </div>
-                              <div className="mt-1 text-[11px] text-slate-400">
-                                {edge.evidence_ref.material_title || edge.evidence_ref.source || 'Graph evidence'}
-                                {edge.evidence_ref.page_ref ? ` · ${edge.evidence_ref.page_ref}` : ''}
-                              </div>
-                              {edge.evidence_ref.snippet && (
-                                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
-                                  {highlightSearchTerms(edge.evidence_ref.snippet, activeQueryTerms)}
-                                </div>
-                              )}
-                            </button>
-                            <div className="mt-2 flex flex-wrap items-center gap-1">
-                              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                                {formatEvidenceLabel(edge.edge_type)}
-                              </span>
-                              <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(edge.review_status)}`}>
-                                {formatEvidenceLabel(edge.review_status)}
-                              </span>
-                              <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphMethodClass(edge.extraction_method)}`}>
-                                {formatEvidenceLabel(edge.extraction_method)}
-                              </span>
-                              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                                {(edge.confidence * 100).toFixed(0)} confidence
-                              </span>
-                              {edge.review_status === 'needs_review' && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => reviewKnowledgeGraphEdge(edge.id, 'accepted')}
-                                    disabled={reviewingGraphEdgeId === edge.id}
-                                    className="rounded-full bg-emerald-600 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white disabled:opacity-40"
-                                  >
-                                    Accept
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => reviewKnowledgeGraphEdge(edge.id, 'rejected')}
-                                    disabled={reviewingGraphEdgeId === edge.id}
-                                    className="rounded-full bg-rose-600 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white disabled:opacity-40"
-                                  >
-                                    Reject
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                {knowledgeGraphTab === 'network' && (
+                  <div className="mt-3">
+                    <RepositoryGraphExplorer
+                      repositoryFetch={repositoryFetch}
+                      activeQuery={fullTextQuery.trim() || citedQuestion.trim()}
+                      isBuilding={isBuildingKnowledgeGraph}
+                      reviewingEdgeId={reviewingGraphEdgeId}
+                      onBuildGraph={buildKnowledgeGraph}
+                      onReviewEdge={reviewKnowledgeGraphEdge}
+                      onOpenEvidence={openGraphEvidenceRef}
+                    />
                   </div>
                 )}
 
