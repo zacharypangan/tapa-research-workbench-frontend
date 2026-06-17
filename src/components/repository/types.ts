@@ -47,6 +47,7 @@ export interface RepositoryWorkbenchProps {
   onTutorialAction?: (target: string) => void;
   initialFocus?: 'search';
   focusSignal?: number;
+  onGraphMapLayerReady?: (layer: KnowledgeGraphMapLayer) => void;
 }
 
 export interface ExtractedPreview {
@@ -355,6 +356,32 @@ export interface KnowledgeGraphMapFeature {
     confidence: number;
     evidence_ref: KnowledgeGraphEvidenceRef;
   };
+}
+
+export interface KnowledgeGraphMapLayer {
+  id: string;
+  name: string;
+  dataset: string;
+  type: 'geojson';
+  source: 'repository_knowledge_graph';
+  visible: boolean;
+  opacity: number;
+  color: [number, number, number];
+  coords: {
+    lat: string;
+    lon: string;
+  };
+  data: Array<Record<string, unknown>>;
+  filteredData: Array<Record<string, unknown>>;
+  geoData: {
+    type: 'FeatureCollection';
+    features: KnowledgeGraphMapFeature[];
+  };
+  isSpatial: boolean;
+  pointSize: number;
+  displayField: string;
+  tooltipFields: string[];
+  staged_at: string;
 }
 
 export interface KnowledgeGraphMapItem {

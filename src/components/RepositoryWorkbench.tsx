@@ -43,6 +43,8 @@ import type {
   KnowledgeGraphBuildResult,
   KnowledgeGraphEdge,
   KnowledgeGraphMap,
+  KnowledgeGraphMapFeature,
+  KnowledgeGraphMapLayer,
   KnowledgeGraphNetwork,
   KnowledgeGraphTimeline,
   Material,
@@ -53,6 +55,12 @@ import type {
   SemanticSearchResponse,
 } from './repository/types';
 
+type TimedKnowledgeGraphMapFeature = KnowledgeGraphMapFeature & {
+  properties: KnowledgeGraphMapFeature['properties'] & {
+    time_year?: number | null;
+  };
+};
+
 const WORKFLOW_STATUS_ORDER = [
   'needs_metadata',
   'ready_for_text_extraction',
@@ -60,7 +68,14 @@ const WORKFLOW_STATUS_ORDER = [
   'needs_review',
 ];
 
-export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
+export default function RepositoryWorkbench({
+  onOpenTutorial,
+  activeTutorialTarget,
+  onTutorialAction,
+  initialFocus,
+  focusSignal,
+  onGraphMapLayerReady,
+}: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -101,6 +116,9 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   const [isBuildingKnowledgeGraph, setIsBuildingKnowledgeGraph] = useState(false);
   const [isLoadingKnowledgeGraph, setIsLoadingKnowledgeGraph] = useState(false);
   const [reviewingGraphEdgeId, setReviewingGraphEdgeId] = useState<string | null>(null);
+  const [isResearchAtlasOpen, setIsResearchAtlasOpen] = useState(false);
+  const [selectedGraphYear, setSelectedGraphYear] = useState<number | null>(null);
+  const [graphMapLayerStatus, setGraphMapLayerStatus] = useState<string | null>(null);
   const [showProcessReferencesPanel, setShowProcessReferencesPanel] = useState(false);
   const [isRunningSemanticSearch, setIsRunningSemanticSearch] = useState(false);
   const [isAskingCorpus, setIsAskingCorpus] = useState(false);
@@ -982,6 +1000,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
       setKnowledgeGraphNetwork(await networkResponse.json());
       setKnowledgeGraphTimeline(await timelineResponse.json());
       setKnowledgeGraphMap(await mapResponse.json());
+      setGraphMapLayerStatus(null);
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Knowledge graph load failed'));
     } finally {
@@ -1522,6 +1541,82 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     return positions;
   }, [visibleGraphNodes]);
 
+  const graphTimelineYears = useMemo(() => {
+    const years = new Set<number>();
+    (knowledgeGraphTimeline?.items || []).forEach((item) => {
+      if (typeof item.sort_year === 'number' && Number.isFinite(item.sort_year)) years.add(item.sort_year);
+    });
+    return Array.from(years).sort((a, b) => a - b);
+  }, [knowledgeGraphTimeline]);
+
+  const graphTimelineMinYear = graphTimelineYears[0] ?? null;
+  const graphTimelineMaxYear = graphTimelineYears.length > 0 ? graphTimelineYears[graphTimelineYears.length - 1] : null;
+
+  useEffect(() => {
+    if (selectedGraphYear == null) return;
+    if (graphTimelineMinYear == null || graphTimelineMaxYear == null) {
+      setSelectedGraphYear(null);
+      return;
+    }
+    if (selectedGraphYear < graphTimelineMinYear || selectedGraphYear > graphTimelineMaxYear) {
+      setSelectedGraphYear(graphTimelineMaxYear);
+    }
+  }, [graphTimelineMaxYear, graphTimelineMinYear, selectedGraphYear]);
+
+  const graphTimelineYearByEdgeId = useMemo(() => {
+    const years = new Map<string, number | null>();
+    [...(knowledgeGraphTimeline?.items || []), ...(knowledgeGraphTimeline?.unresolved || [])].forEach((item) => {
+      years.set(item.edge.id, item.sort_year ?? null);
+    });
+    return years;
+  }, [knowledgeGraphTimeline]);
+
+  const graphTimelineYearByMaterialId = useMemo(() => {
+    const years = new Map<string, number>();
+    (knowledgeGraphTimeline?.items || []).forEach((item) => {
+      const materialId = item.edge.evidence_ref.material_id;
+      if (!materialId || typeof item.sort_year !== 'number' || !Number.isFinite(item.sort_year)) return;
+      const existingYear = years.get(materialId);
+      if (existingYear == null || item.sort_year < existingYear) years.set(materialId, item.sort_year);
+    });
+    return years;
+  }, [knowledgeGraphTimeline]);
+
+  const timedGraphMapFeatures = useMemo<TimedKnowledgeGraphMapFeature[]>(() => {
+    return (knowledgeGraphMap?.geojson.features || []).map((feature) => {
+      const exactYear = graphTimelineYearByEdgeId.get(feature.properties.edge_id);
+      const materialYear = feature.properties.evidence_ref.material_id
+        ? graphTimelineYearByMaterialId.get(feature.properties.evidence_ref.material_id)
+        : null;
+      return {
+        ...feature,
+        properties: {
+          ...feature.properties,
+          time_year: exactYear ?? materialYear ?? null,
+        },
+      };
+    });
+  }, [graphTimelineYearByEdgeId, graphTimelineYearByMaterialId, knowledgeGraphMap]);
+
+  const filteredGraphMapFeatures = useMemo(() => {
+    if (selectedGraphYear == null) return timedGraphMapFeatures;
+    return timedGraphMapFeatures.filter((feature) => {
+      const year = feature.properties.time_year;
+      return typeof year !== 'number' || year <= selectedGraphYear;
+    });
+  }, [selectedGraphYear, timedGraphMapFeatures]);
+
+  const graphMapPreviewPoints = useMemo(() => {
+    return filteredGraphMapFeatures.slice(0, 80).map((feature) => {
+      const [lon, lat] = feature.geometry.coordinates;
+      return {
+        feature,
+        x: Math.min(354, Math.max(6, ((lon + 180) / 360) * 360)),
+        y: Math.min(174, Math.max(6, ((90 - lat) / 180) * 180)),
+      };
+    });
+  }, [filteredGraphMapFeatures]);
+
   const graphNodeColor = (nodeType: string) => {
     if (nodeType === 'material') return '#2563eb';
     if (nodeType === 'concept' || nodeType === 'keyword') return '#059669';
@@ -1544,6 +1639,58 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     if (method.includes('metadata')) return 'bg-slate-100 text-slate-600';
     if (method.includes('cooccurrence') || method.includes('pattern')) return 'bg-purple-100 text-purple-700';
     return 'bg-teal-100 text-teal-700';
+  };
+
+  const stageKnowledgeGraphMapLayer = () => {
+    if (!knowledgeGraphMap) return;
+
+    const layerRows = filteredGraphMapFeatures.map((feature) => ({
+      id: feature.properties.edge_id,
+      place_label: feature.properties.place_label,
+      latitude: feature.geometry.coordinates[1],
+      longitude: feature.geometry.coordinates[0],
+      source_label: feature.properties.source_label,
+      source_type: feature.properties.source_type,
+      review_status: feature.properties.review_status,
+      confidence: feature.properties.confidence,
+      time_year: feature.properties.time_year ?? null,
+      material_title: feature.properties.evidence_ref.material_title || '',
+      page_ref: feature.properties.evidence_ref.page_ref || '',
+      source_locator: feature.properties.evidence_ref.source_locator || '',
+      snippet: feature.properties.evidence_ref.snippet || '',
+    }));
+    const geoData = {
+      ...knowledgeGraphMap.geojson,
+      features: filteredGraphMapFeatures,
+    };
+    const layer: KnowledgeGraphMapLayer = {
+      id: `research-atlas-${Date.now()}`,
+      name: selectedGraphYear == null
+        ? 'Research Atlas spatial evidence'
+        : `Research Atlas spatial evidence through ${selectedGraphYear}`,
+      dataset: 'Research Atlas',
+      type: 'geojson',
+      source: 'repository_knowledge_graph',
+      visible: true,
+      opacity: 0.9,
+      color: [217, 119, 6],
+      coords: { lat: 'latitude', lon: 'longitude' },
+      data: layerRows,
+      filteredData: layerRows,
+      geoData,
+      isSpatial: true,
+      pointSize: 6,
+      displayField: 'place_label',
+      tooltipFields: ['place_label', 'source_label', 'review_status', 'confidence', 'time_year'],
+      staged_at: new Date().toISOString(),
+    };
+
+    window.sessionStorage.setItem('tapa-workbench:research-atlas-layer', JSON.stringify(layer));
+    window.dispatchEvent(new CustomEvent('tapa-workbench:research-atlas-layer', { detail: layer }));
+    onGraphMapLayerReady?.(layer);
+    setGraphMapLayerStatus(
+      `${layerRows.length} resolved place ${layerRows.length === 1 ? 'point' : 'points'} staged for GIS${selectedGraphYear == null ? '' : ` through ${selectedGraphYear}`}.`,
+    );
   };
 
   return (
@@ -2118,7 +2265,33 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                 </div>
               )}
 
-              <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+            </div>
+
+            <section
+              data-tutorial-target="research-atlas"
+              className={`mb-3 overflow-hidden rounded-xl border border-slate-200 bg-white ${tutorialTargetClass('research-atlas')}`}
+            >
+              <button
+                type="button"
+                onClick={() => setIsResearchAtlasOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-slate-50"
+                aria-expanded={isResearchAtlasOpen}
+              >
+                <div>
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Research Atlas
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Semantic network, temporal evidence, and GIS-ready spatial evidence from the repository graph.
+                  </p>
+                </div>
+                <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  {isResearchAtlasOpen ? 'Hide' : 'Show'}
+                </span>
+              </button>
+
+              {isResearchAtlasOpen && (
+                <div className="border-t border-slate-100 bg-slate-50 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -2373,55 +2546,160 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                 )}
 
                 {knowledgeGraphTab === 'map' && knowledgeGraphMap && (
-                  <div className="mt-3 space-y-2">
-                    <div className="text-xs text-slate-500">{knowledgeGraphMap.evidence_note}</div>
-                    {knowledgeGraphMap.geojson.features.slice(0, 8).map((feature) => (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-xs text-slate-500">{knowledgeGraphMap.evidence_note}</div>
                       <button
-                        key={feature.properties.edge_id}
                         type="button"
-                        onClick={() => openGraphEvidenceRef(feature.properties.evidence_ref)}
-                        className="block w-full rounded-lg border border-slate-100 bg-white p-3 text-left hover:bg-blue-50"
+                        onClick={stageKnowledgeGraphMapLayer}
+                        disabled={filteredGraphMapFeatures.length === 0}
+                        className="h-8 rounded-lg border border-amber-200 bg-amber-50 px-3 text-[10px] font-black uppercase tracking-wider text-amber-800 hover:bg-amber-100 disabled:opacity-40"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-sm font-black text-slate-700">{feature.properties.place_label}</div>
-                          <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
-                            {feature.geometry.coordinates[1].toFixed(4)}, {feature.geometry.coordinates[0].toFixed(4)}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-400">
-                          {feature.properties.evidence_ref.material_title || feature.properties.source_label}
-                          {feature.properties.evidence_ref.page_ref ? ` · ${feature.properties.evidence_ref.page_ref}` : ''}
-                        </div>
+                        Stage GIS Layer
                       </button>
-                    ))}
-                    {knowledgeGraphMap.unresolved.slice(0, 10).map((item) => (
-                      <button
-                        key={item.edge.id}
-                        type="button"
-                        onClick={() => openGraphEvidence(item.edge)}
-                        className="block w-full rounded-lg border border-amber-100 bg-amber-50 p-3 text-left hover:bg-amber-100"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-sm font-black text-amber-900">{item.place_label}</div>
-                          <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(item.edge.review_status)}`}>
-                            Unresolved
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-amber-700">
-                          {item.edge.evidence_ref.material_title || item.source_label}
-                          {item.edge.evidence_ref.page_ref ? ` · ${item.edge.evidence_ref.page_ref}` : ''}
-                        </div>
-                      </button>
-                    ))}
-                    {knowledgeGraphMap.geojson.features.length === 0 && knowledgeGraphMap.unresolved.length === 0 && (
-                      <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
-                        No spatial graph evidence matched this query yet.
+                    </div>
+
+                    {graphMapLayerStatus && (
+                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
+                        {graphMapLayerStatus}
                       </div>
                     )}
+
+                    <div className="grid gap-3 xl:grid-cols-[380px_1fr]">
+                      <div className="rounded-lg border border-slate-100 bg-white p-3">
+                        {graphTimelineMinYear != null && graphTimelineMaxYear != null && (
+                          <div>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                Map Year
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedGraphYear(null)}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+                              >
+                                All Years
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min={graphTimelineMinYear}
+                              max={graphTimelineMaxYear}
+                              step={1}
+                              value={selectedGraphYear ?? graphTimelineMaxYear}
+                              onChange={(event) => setSelectedGraphYear(Number(event.target.value))}
+                              className="mt-2 w-full accent-amber-600"
+                            />
+                            <div className="mt-1 flex items-center justify-between text-[11px] font-bold text-slate-400">
+                              <span>{graphTimelineMinYear}</span>
+                              <span className="text-slate-600">
+                                {selectedGraphYear == null ? 'All resolved years' : `Through ${selectedGraphYear}`}
+                              </span>
+                              <span>{graphTimelineMaxYear}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        <svg viewBox="0 0 360 180" className="mt-3 h-[180px] w-full rounded-lg bg-sky-50">
+                          <rect x="0" y="0" width="360" height="180" fill="#eff6ff" />
+                          <path
+                            d="M22 82 C48 56 83 60 105 75 C132 92 156 73 187 82 C222 92 246 68 283 76 C314 82 333 99 350 87"
+                            fill="none"
+                            stroke="#cbd5e1"
+                            strokeWidth="16"
+                            strokeLinecap="round"
+                            opacity="0.8"
+                          />
+                          {[60, 120, 180, 240, 300].map((x) => (
+                            <line key={`lon-${x}`} x1={x} y1="0" x2={x} y2="180" stroke="#dbeafe" strokeWidth="1" />
+                          ))}
+                          {[45, 90, 135].map((y) => (
+                            <line key={`lat-${y}`} x1="0" y1={y} x2="360" y2={y} stroke="#dbeafe" strokeWidth="1" />
+                          ))}
+                          {graphMapPreviewPoints.length === 0 && (
+                            <text x="180" y="94" textAnchor="middle" className="fill-slate-400 text-[11px] font-bold">
+                              No resolved place evidence
+                            </text>
+                          )}
+                          {graphMapPreviewPoints.map(({ feature, x, y }) => (
+                            <g key={feature.properties.edge_id}>
+                              <circle cx={x} cy={y} r="7" fill="#f59e0b" opacity="0.22" />
+                              <circle cx={x} cy={y} r="3.5" fill="#d97706">
+                                <title>
+                                  {feature.properties.place_label}
+                                  {feature.properties.time_year ? ` (${feature.properties.time_year})` : ''}
+                                </title>
+                              </circle>
+                            </g>
+                          ))}
+                        </svg>
+
+                        <div className="mt-2 text-[11px] font-bold text-slate-400">
+                          Showing {filteredGraphMapFeatures.length} of {knowledgeGraphMap.geojson.features.length} resolved place points.
+                          {knowledgeGraphMap.unresolved.length > 0 ? ` ${knowledgeGraphMap.unresolved.length} unresolved labels need review.` : ''}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {filteredGraphMapFeatures.slice(0, 8).map((feature) => (
+                          <button
+                            key={feature.properties.edge_id}
+                            type="button"
+                            onClick={() => openGraphEvidenceRef(feature.properties.evidence_ref)}
+                            className="block w-full rounded-lg border border-slate-100 bg-white p-3 text-left hover:bg-blue-50"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-black text-slate-700">{feature.properties.place_label}</div>
+                              <div className="flex flex-wrap gap-1">
+                                {typeof feature.properties.time_year === 'number' && (
+                                  <span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700">
+                                    {feature.properties.time_year}
+                                  </span>
+                                )}
+                                <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                                  {feature.geometry.coordinates[1].toFixed(4)}, {feature.geometry.coordinates[0].toFixed(4)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              {feature.properties.evidence_ref.material_title || feature.properties.source_label}
+                              {feature.properties.evidence_ref.page_ref ? ` · ${feature.properties.evidence_ref.page_ref}` : ''}
+                            </div>
+                          </button>
+                        ))}
+
+                        {knowledgeGraphMap.unresolved.slice(0, 10).map((item) => (
+                          <button
+                            key={item.edge.id}
+                            type="button"
+                            onClick={() => openGraphEvidence(item.edge)}
+                            className="block w-full rounded-lg border border-amber-100 bg-amber-50 p-3 text-left hover:bg-amber-100"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-black text-amber-900">{item.place_label}</div>
+                              <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(item.edge.review_status)}`}>
+                                Unresolved
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[11px] text-amber-700">
+                              {item.edge.evidence_ref.material_title || item.source_label}
+                              {item.edge.evidence_ref.page_ref ? ` · ${item.edge.evidence_ref.page_ref}` : ''}
+                            </div>
+                          </button>
+                        ))}
+
+                        {knowledgeGraphMap.geojson.features.length === 0 && knowledgeGraphMap.unresolved.length === 0 && (
+                          <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
+                            No spatial graph evidence matched this query yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
+                </div>
+              )}
+            </section>
 
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
               <table className="w-full table-fixed text-left">
