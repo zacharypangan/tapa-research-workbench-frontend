@@ -1,8 +1,16 @@
-import type { GraphFilters, InteractiveGraphLevel } from './graphTypes';
-import { GRAPH_EDGE_TYPES, GRAPH_NODE_TYPES, graphLevelLabel } from './graphTypes';
+import type { GraphExplorerMode, GraphFilters, InteractiveGraphLevel } from './graphTypes';
+import {
+  GRAPH_EDGE_TYPES,
+  GRAPH_NODE_TYPES,
+  SEMANTIC_EDGE_TYPES,
+  SEMANTIC_NODE_TYPES,
+  graphLevelLabel,
+} from './graphTypes';
 import type { GraphReviewStatus } from '../types';
 
 interface GraphControlsProps {
+  mode: GraphExplorerMode;
+  onModeChange: (mode: GraphExplorerMode) => void;
   level: InteractiveGraphLevel;
   onLevelChange: (level: InteractiveGraphLevel) => void;
   searchTerm: string;
@@ -23,6 +31,7 @@ interface GraphControlsProps {
 }
 
 const REVIEW_STATUSES: GraphReviewStatus[] = ['accepted', 'needs_review', 'unreviewed', 'rejected'];
+const WEAK_EDGE_TYPES = ['co_occurs_with', 'semantically_related_to'];
 
 export function GraphControls({
   level,
@@ -42,11 +51,23 @@ export function GraphControls({
   isBuilding,
   isLoading,
   disabled,
+  mode,
+  onModeChange,
 }: GraphControlsProps) {
+  const nodeTypes = mode === 'semantic' ? SEMANTIC_NODE_TYPES : GRAPH_NODE_TYPES;
+  const edgeTypes = mode === 'semantic' ? SEMANTIC_EDGE_TYPES : GRAPH_EDGE_TYPES;
+  const weakLinksEnabled = WEAK_EDGE_TYPES.every((edgeType) => filters.edgeTypes.includes(edgeType));
   const toggleFilterValue = (key: 'nodeTypes' | 'edgeTypes' | 'reviewStatuses', value: string) => {
     const current = filters[key] as string[];
     const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
     onFiltersChange({ ...filters, [key]: next });
+  };
+
+  const toggleWeakLinks = () => {
+    const nextEdgeTypes = weakLinksEnabled
+      ? filters.edgeTypes.filter((edgeType) => !WEAK_EDGE_TYPES.includes(edgeType))
+      : Array.from(new Set([...filters.edgeTypes, ...WEAK_EDGE_TYPES]));
+    onFiltersChange({ ...filters, edgeTypes: nextEdgeTypes });
   };
 
   return (
@@ -75,7 +96,7 @@ export function GraphControls({
             onKeyDown={(event) => {
               if (event.key === 'Enter') onSearchSubmit();
             }}
-            placeholder="Search graph: tapa, beating, Fiji"
+            placeholder={mode === 'semantic' ? 'Focus documents, entities, or evidence' : 'Search graph: tapa, beating, Fiji'}
             className="repo-input h-9"
           />
           <button
@@ -97,7 +118,7 @@ export function GraphControls({
               disabled={disabled}
               className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
             >
-              Visible Graph JSON
+              {mode === 'semantic' ? 'Visible Atlas JSON' : 'Visible Graph JSON'}
             </button>
             <button
               type="button"
@@ -105,44 +126,82 @@ export function GraphControls({
               disabled={disabled}
               className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
             >
-              All Graph JSON
+              {mode === 'semantic' ? 'All Semantic JSON' : 'All Graph JSON'}
             </button>
           </div>
         </details>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {(['overview', 'documents', 'sections', 'concepts'] as InteractiveGraphLevel[]).map((item) => (
+        {([
+          ['semantic', 'Semantic Atlas'],
+          ['evidence', 'Evidence Graph'],
+        ] as Array<[GraphExplorerMode, string]>).map(([item, label]) => (
           <button
             key={item}
             type="button"
-            onClick={() => onLevelChange(item)}
+            onClick={() => onModeChange(item)}
             className={`rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
-              level === item ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+              mode === item ? 'bg-emerald-700 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
             }`}
-          >
-            {graphLevelLabel(item)}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {[
-          ['beginner', "I'm New Here"],
-          ['structure', 'Show Document Structure'],
-          ['concepts', 'Show Concepts'],
-          ['places_time', 'Show Places/Time'],
-        ].map(([tour, label]) => (
-          <button
-            key={tour}
-            type="button"
-            onClick={() => onTour(tour as 'beginner' | 'structure' | 'concepts' | 'places_time')}
-            className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-white"
           >
             {label}
           </button>
         ))}
+        <span className="self-center text-[11px] font-bold text-slate-400">
+          {mode === 'semantic'
+            ? 'Meaningful entities and aggregated relations first; evidence on drill-down.'
+            : 'Advanced view of stored evidence nodes and review links.'}
+        </span>
+        {mode === 'evidence' && (
+          <button
+            type="button"
+            onClick={toggleWeakLinks}
+            className={`rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+              weakLinksEnabled ? 'bg-amber-600 text-white' : 'border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+            }`}
+          >
+            {weakLinksEnabled ? 'Weak Links On' : 'Show Weak Links'}
+          </button>
+        )}
       </div>
+
+      {mode === 'evidence' && (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {(['overview', 'documents', 'sections', 'concepts'] as InteractiveGraphLevel[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => onLevelChange(item)}
+                className={`rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                  level === item ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                {graphLevelLabel(item)}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {[
+              ['beginner', "I'm New Here"],
+              ['structure', 'Show Document Structure'],
+              ['concepts', 'Show Concepts'],
+              ['places_time', 'Places & Time'],
+            ].map(([tour, label]) => (
+              <button
+                key={tour}
+                type="button"
+                onClick={() => onTour(tour as 'beginner' | 'structure' | 'concepts' | 'places_time')}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-white"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <details>
         <summary className="cursor-pointer list-none text-[10px] font-black uppercase tracking-widest text-slate-400">
@@ -152,7 +211,7 @@ export function GraphControls({
           <div>
             <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Node Types</div>
             <div className="flex flex-wrap gap-1">
-              {GRAPH_NODE_TYPES.map((nodeType) => (
+              {nodeTypes.map((nodeType) => (
                 <button
                   key={nodeType}
                   type="button"
@@ -169,7 +228,7 @@ export function GraphControls({
           <div>
             <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Edge Types</div>
             <div className="flex flex-wrap gap-1">
-              {GRAPH_EDGE_TYPES.map((edgeType) => (
+              {edgeTypes.map((edgeType) => (
                 <button
                   key={edgeType}
                   type="button"

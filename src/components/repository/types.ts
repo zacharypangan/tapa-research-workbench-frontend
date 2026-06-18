@@ -340,6 +340,10 @@ export interface KnowledgeGraphTimeline {
   material_id?: string | null;
   items: KnowledgeGraphTimelineItem[];
   unresolved: KnowledgeGraphTimelineItem[];
+  summary?: {
+    valid_time_count: number;
+    review_time_count: number;
+  };
   evidence_note?: string;
 }
 
@@ -402,6 +406,11 @@ export interface KnowledgeGraphMap {
     features: KnowledgeGraphMapFeature[];
   };
   unresolved: KnowledgeGraphMapItem[];
+  summary?: {
+    resolved_coordinate_count: number;
+    unresolved_place_mentions: number;
+    accepted_without_coordinates: number;
+  };
   evidence_note?: string;
 }
 

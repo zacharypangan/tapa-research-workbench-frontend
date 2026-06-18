@@ -34,6 +34,7 @@ import {
 } from './repository/formatters';
 import { buildPrintableReportHtml } from './repository/printableReport';
 import { RepositoryGraphExplorer } from './repository/graph/RepositoryGraphExplorer';
+import type { SemanticGraphPayload } from './repository/graph/graphTypes';
 import { SearchReportModal } from './repository/SearchReportModal';
 import type {
   AIEvidenceReport,
@@ -46,7 +47,6 @@ import type {
   KnowledgeGraphMap,
   KnowledgeGraphMapFeature,
   KnowledgeGraphMapLayer,
-  KnowledgeGraphNetwork,
   KnowledgeGraphTimeline,
   Material,
   Observation,
@@ -109,7 +109,7 @@ export default function RepositoryWorkbench({
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
-  const [knowledgeGraphNetwork, setKnowledgeGraphNetwork] = useState<KnowledgeGraphNetwork | null>(null);
+  const [knowledgeGraphNetwork, setKnowledgeGraphNetwork] = useState<SemanticGraphPayload | null>(null);
   const [knowledgeGraphTimeline, setKnowledgeGraphTimeline] = useState<KnowledgeGraphTimeline | null>(null);
   const [knowledgeGraphMap, setKnowledgeGraphMap] = useState<KnowledgeGraphMap | null>(null);
   const [knowledgeGraphBuild, setKnowledgeGraphBuild] = useState<KnowledgeGraphBuildResult | null>(null);
@@ -970,7 +970,7 @@ export default function RepositoryWorkbench({
 
     try {
       const query = fullTextQuery.trim() || citedQuestion.trim();
-      const networkParams = new URLSearchParams({ limit: '80' });
+      const networkParams = new URLSearchParams({ limit: '220', view: 'overview' });
       const timelineParams = new URLSearchParams({ limit: '100' });
       const mapParams = new URLSearchParams({ limit: '100' });
       if (query.length >= 2) {
@@ -980,21 +980,21 @@ export default function RepositoryWorkbench({
       }
 
       const [networkResponse, timelineResponse, mapResponse] = await Promise.all([
-        repositoryFetch(`/graph/network?${networkParams}`),
-        repositoryFetch(`/graph/timeline?${timelineParams}`),
-        repositoryFetch(`/graph/map?${mapParams}`),
+        repositoryFetch(`/graph/semantic?${networkParams}`),
+        repositoryFetch(`/graph/semantic/timeline?${timelineParams}`),
+        repositoryFetch(`/graph/semantic/map?${mapParams}`),
       ]);
 
       if (!networkResponse.ok) {
-        const message = await parseErrorResponse(networkResponse, 'Knowledge graph network failed');
+        const message = await parseErrorResponse(networkResponse, 'Semantic Atlas network failed');
         throw new Error(message);
       }
       if (!timelineResponse.ok) {
-        const message = await parseErrorResponse(timelineResponse, 'Knowledge graph timeline failed');
+        const message = await parseErrorResponse(timelineResponse, 'Time Evidence failed');
         throw new Error(message);
       }
       if (!mapResponse.ok) {
-        const message = await parseErrorResponse(mapResponse, 'Knowledge graph map failed');
+        const message = await parseErrorResponse(mapResponse, 'Place Evidence failed');
         throw new Error(message);
       }
 
@@ -1003,13 +1003,39 @@ export default function RepositoryWorkbench({
       setKnowledgeGraphMap(await mapResponse.json());
       setGraphMapLayerStatus(null);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Knowledge graph load failed'));
+      setError(getErrorMessage(err, 'Research Atlas load failed'));
     } finally {
       setIsLoadingKnowledgeGraph(false);
     }
   }, [citedQuestion, fullTextQuery, repositoryFetch]);
 
   const buildKnowledgeGraph = async () => {
+    setIsBuildingKnowledgeGraph(true);
+    setError(null);
+
+    try {
+      const response = await repositoryFetch('/graph/semantic/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+
+      if (!response.ok) {
+        const message = await parseErrorResponse(response, 'Semantic Atlas build failed');
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setKnowledgeGraphBuild(data);
+      await loadKnowledgeGraph();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Semantic Atlas build failed'));
+    } finally {
+      setIsBuildingKnowledgeGraph(false);
+    }
+  };
+
+  const buildEvidenceGraph = async () => {
     setIsBuildingKnowledgeGraph(true);
     setError(null);
 
@@ -1021,15 +1047,11 @@ export default function RepositoryWorkbench({
       });
 
       if (!response.ok) {
-        const message = await parseErrorResponse(response, 'Knowledge graph build failed');
+        const message = await parseErrorResponse(response, 'Evidence Graph build failed');
         throw new Error(message);
       }
-
-      const data = await response.json();
-      setKnowledgeGraphBuild(data);
-      await loadKnowledgeGraph();
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Knowledge graph build failed'));
+      setError(getErrorMessage(err, 'Evidence Graph build failed'));
     } finally {
       setIsBuildingKnowledgeGraph(false);
     }
@@ -2237,7 +2259,7 @@ export default function RepositoryWorkbench({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                      Knowledge Graph
+                      Semantic Discovery Graph
                     </div>
                     {knowledgeGraphBuild && (
                       <div className="mt-1 text-[11px] text-slate-400">
@@ -2273,7 +2295,7 @@ export default function RepositoryWorkbench({
                           disabled={!knowledgeGraphNetwork}
                           className="block w-full px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
-                          Network JSON
+                          Semantic Graph JSON
                         </button>
                         <button
                           type="button"
@@ -2306,9 +2328,9 @@ export default function RepositoryWorkbench({
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
-                    ['network', 'Explorer'],
-                    ['timeline', 'Timeline'],
-                    ['map', 'Map'],
+                    ['network', 'Semantic Atlas'],
+                    ['timeline', 'Time Evidence'],
+                    ['map', 'Place Evidence'],
                   ].map(([tab, label]) => (
                     <button
                       key={tab}
@@ -2332,9 +2354,11 @@ export default function RepositoryWorkbench({
                       activeQuery={fullTextQuery.trim() || citedQuestion.trim()}
                       isBuilding={isBuildingKnowledgeGraph}
                       reviewingEdgeId={reviewingGraphEdgeId}
-                      onBuildGraph={buildKnowledgeGraph}
-                      onReviewEdge={reviewKnowledgeGraphEdge}
+                      onBuildSemanticGraph={buildKnowledgeGraph}
+                      onBuildEvidenceGraph={buildEvidenceGraph}
+                      onReviewEvidenceEdge={reviewKnowledgeGraphEdge}
                       onOpenEvidence={openGraphEvidenceRef}
+                      onOpenMaterialView={(materialId, view) => openAnnotationWorkspace(materialId, view)}
                     />
                   </div>
                 )}
@@ -2342,7 +2366,17 @@ export default function RepositoryWorkbench({
                 {knowledgeGraphTab === 'timeline' && knowledgeGraphTimeline && (
                   <div className="mt-3 space-y-2">
                     <div className="text-xs text-slate-500">{knowledgeGraphTimeline.evidence_note}</div>
-                    {[...knowledgeGraphTimeline.items, ...knowledgeGraphTimeline.unresolved].slice(0, 12).map((item, index) => (
+                    {knowledgeGraphTimeline.summary && (
+                      <div className="flex flex-wrap gap-2 text-[10px] font-black uppercase tracking-wider">
+                        <span className="bg-violet-100 px-2 py-1 text-violet-700">
+                          {knowledgeGraphTimeline.summary.valid_time_count} valid periods
+                        </span>
+                        <span className="bg-amber-100 px-2 py-1 text-amber-800">
+                          {knowledgeGraphTimeline.summary.review_time_count} review candidates
+                        </span>
+                      </div>
+                    )}
+                    {knowledgeGraphTimeline.items.slice(0, 12).map((item, index) => (
                       <button
                         key={`${item.edge.id}-${index}`}
                         type="button"
@@ -2351,8 +2385,7 @@ export default function RepositoryWorkbench({
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm font-black text-slate-700">
-                            {item.time_label}
-                            {item.sort_year != null ? ` · ${item.sort_year}` : ' · unresolved'}
+                            {item.time_label} · {item.sort_year}
                           </div>
                           <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${graphStatusClass(item.edge.review_status)}`}>
                             {formatEvidenceLabel(item.edge.review_status)}
@@ -2369,10 +2402,33 @@ export default function RepositoryWorkbench({
                         )}
                       </button>
                     ))}
-                    {knowledgeGraphTimeline.items.length === 0 && knowledgeGraphTimeline.unresolved.length === 0 && (
+                    {knowledgeGraphTimeline.items.length === 0 && (
                       <div className="rounded-lg border border-slate-100 bg-white p-3 text-xs text-slate-400">
-                        No timeline evidence matched this query yet.
+                        No validated time evidence matched this query yet.
                       </div>
+                    )}
+                    {knowledgeGraphTimeline.unresolved.length > 0 && (
+                      <details className="border border-amber-100 bg-amber-50 p-3">
+                        <summary className="cursor-pointer list-none text-[10px] font-black uppercase tracking-widest text-amber-800">
+                          Review invalid or ambiguous time mentions ({knowledgeGraphTimeline.unresolved.length})
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {knowledgeGraphTimeline.unresolved.slice(0, 8).map((item, index) => (
+                            <button
+                              key={`${item.edge.id}-review-${index}`}
+                              type="button"
+                              onClick={() => openGraphEvidence(item.edge)}
+                              className="block w-full border border-amber-100 bg-white p-3 text-left hover:bg-amber-100"
+                            >
+                              <div className="text-sm font-black text-amber-900">{item.time_label}</div>
+                              <div className="mt-1 text-[11px] text-amber-700">
+                                {item.edge.evidence_ref.material_title || item.source_label}
+                                {item.edge.evidence_ref.page_ref ? ` · ${item.edge.evidence_ref.page_ref}` : ''}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </details>
                     )}
                   </div>
                 )}
@@ -2380,7 +2436,19 @@ export default function RepositoryWorkbench({
                 {knowledgeGraphTab === 'map' && knowledgeGraphMap && (
                   <div className="mt-3 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs text-slate-500">{knowledgeGraphMap.evidence_note}</div>
+                      <div>
+                        <div className="text-xs text-slate-500">{knowledgeGraphMap.evidence_note}</div>
+                        {knowledgeGraphMap.summary && (
+                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-black uppercase tracking-wider">
+                            <span className="bg-emerald-100 px-2 py-1 text-emerald-700">
+                              {knowledgeGraphMap.summary.resolved_coordinate_count} mapped places
+                            </span>
+                            <span className="bg-amber-100 px-2 py-1 text-amber-800">
+                              {knowledgeGraphMap.summary.unresolved_place_mentions} unresolved mentions
+                            </span>
+                          </div>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={stageKnowledgeGraphMapLayer}

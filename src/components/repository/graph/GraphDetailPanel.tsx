@@ -21,6 +21,29 @@ const statusClass = (status: GraphReviewStatus) => {
   return 'bg-slate-100 text-slate-600';
 };
 
+const edgePlainEnglish = (edgeType: string) => {
+  const labels: Record<string, string> = {
+    contains: 'contains or groups',
+    authored_by: 'is authored by',
+    has_keyword: 'has keyword',
+    mentions_concept: 'mentions concept',
+    mentions_place: 'mentions place',
+    mentions_time: 'mentions time',
+    observation_of: 'is a human observation of',
+    image_of: 'is image evidence from',
+    semantically_related_to: 'is semantically related',
+    co_occurs_with: 'co-occurs in nearby evidence',
+  };
+  return labels[edgeType] || formatEvidenceLabel(edgeType);
+};
+
+const nodeMetric = (label: string, value: number | string | null | undefined) => (
+  <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+    <div className="text-base font-black text-slate-800">{value ?? '0'}</div>
+    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+  </div>
+);
+
 export function GraphDetailPanel({
   selection,
   nodeDetail,
@@ -68,8 +91,14 @@ export function GraphDetailPanel({
           </span>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-slate-500">
-          This link is grounded in stored repository evidence. Weak or co-occurrence links are candidates for review, not interpretive claims.
+          This relationship means “{edgePlainEnglish(edge.edge_type)}.”{' '}
+          {edge.edge_type === 'co_occurs_with' || edge.edge_type === 'semantically_related_to' || edge.review_status !== 'accepted'
+            ? 'Treat it as a weak or suggested relationship until reviewed.'
+            : 'This is direct accepted evidence or deterministic metadata.'}
         </p>
+        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs font-bold leading-relaxed text-slate-600">
+          Why this link exists: {edge.summary || edge.evidence_ref.snippet || `It was created by ${formatEvidenceLabel(edge.extraction_method)} evidence extraction.`}
+        </div>
         <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 p-3">
           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Evidence Source</div>
           <div className="mt-1 text-sm font-black text-slate-700">
@@ -109,6 +138,11 @@ export function GraphDetailPanel({
   }
 
   const node = selection.node;
+  const sectionCount = typeof node.properties.section_count === 'number' ? node.properties.section_count : undefined;
+  const imageCount = typeof node.properties.image_count === 'number' ? node.properties.image_count : undefined;
+  const observationCount = typeof node.properties.observation_count === 'number' ? node.properties.observation_count : undefined;
+  const nodeIds = Array.isArray(node.properties.node_ids) ? node.properties.node_ids : [];
+  const isConceptLike = ['concept', 'keyword', 'place', 'time_reference', 'author'].includes(node.node_type);
 
   return (
     <aside className="min-h-[540px] rounded-lg border border-slate-100 bg-white p-4">
@@ -133,6 +167,28 @@ export function GraphDetailPanel({
         )}
       </div>
       <p className="mt-3 text-sm leading-relaxed text-slate-500">{node.summary}</p>
+      {node.is_synthetic && (
+        <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold leading-relaxed text-emerald-800">
+          This is a summarized analysis node. It groups {node.node_count || nodeIds.length || 'multiple'} underlying evidence item(s) so the graph stays readable. Click it again to expand or collapse representative details.
+        </div>
+      )}
+      {node.node_type === 'material' && (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {nodeMetric('Source Type', node.source_type || 'Source')}
+          {nodeMetric('Year', node.year || 'Unknown')}
+          {nodeMetric('Language', node.language || 'Unknown')}
+          {nodeMetric('Region', node.region || 'Unknown')}
+          {sectionCount !== undefined && nodeMetric('Sections', sectionCount)}
+          {imageCount !== undefined && nodeMetric('Images', imageCount)}
+          {observationCount !== undefined && nodeMetric('Observations', observationCount)}
+        </div>
+      )}
+      {isConceptLike && (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {nodeMetric('Documents', node.document_count || 0)}
+          {nodeMetric('Evidence Links', node.evidence_count || node.degree)}
+        </div>
+      )}
       {sourceRef?.material_id && (
         <button
           type="button"
@@ -149,6 +205,11 @@ export function GraphDetailPanel({
       >
         Clear Focus
       </button>
+      {node.node_type === 'material' && (
+        <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs font-bold leading-relaxed text-blue-800">
+          Drill-down starts with summary groups. Use the document group nodes for sections, images, observations, concepts, places, and time references before opening individual source snippets.
+        </div>
+      )}
 
       <div className="mt-5">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Connected Nodes</div>

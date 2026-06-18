@@ -8,8 +8,8 @@ import type {
 import { edgeSourceId, edgeTargetId } from './graphTypes';
 
 const LEVEL_NODE_TYPES: Record<InteractiveGraphLevel, string[]> = {
-  overview: ['corpus', 'material'],
-  documents: ['corpus', 'material', 'segment', 'image', 'observation'],
+  overview: ['material'],
+  documents: ['material', 'segment', 'image', 'observation'],
   sections: ['material', 'segment', 'image', 'observation', 'concept', 'keyword', 'place', 'time_reference'],
   concepts: ['material', 'segment', 'image', 'observation', 'concept', 'keyword', 'place', 'time_reference', 'author'],
 };
@@ -89,7 +89,14 @@ export const filterInteractiveGraph = (
     if (!visibleNodeIds.has(source) || !visibleNodeIds.has(target)) return false;
     if (!edgeTypeSet.has(edge.edge_type)) return false;
     if (!reviewSet.has(edge.review_status)) return false;
-    if (edge.confidence < filters.confidence) return false;
+    if (
+      edge.confidence < filters.confidence &&
+      edge.review_status !== 'accepted' &&
+      edge.extraction_method !== 'metadata' &&
+      edge.extraction_method !== 'human_observation'
+    ) {
+      return false;
+    }
     if (!normalizedSearch) return true;
     const edgeHaystack = [
       edge.edge_type,
@@ -112,7 +119,9 @@ export const filterInteractiveGraph = (
     connectedNodeIds.add(edgeTargetId(edge));
   });
 
-  const visibleNodes = payload.nodes.filter((node) => visibleNodeIds.has(node.id) && (connectedNodeIds.has(node.id) || node.node_type === 'corpus'));
+  const visibleNodes = payload.nodes.filter(
+    (node) => visibleNodeIds.has(node.id) && (connectedNodeIds.has(node.id) || node.node_type === 'material'),
+  );
   return { nodes: visibleNodes, edges: visibleEdges };
 };
 

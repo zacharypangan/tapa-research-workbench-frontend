@@ -2,9 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GraphCanvas } from './GraphCanvas';
 import { GraphControls } from './GraphControls';
 import { GraphDetailPanel } from './GraphDetailPanel';
-import { filterInteractiveGraph, mergeGraphPayloads } from './graphLayout';
+import { SemanticAtlasCanvas } from './SemanticAtlasCanvas';
+import { SemanticGraphDetailPanel } from './SemanticGraphDetailPanel';
+import { filterInteractiveGraph } from './graphFiltering';
+import { mergeGraphPayloads } from './graphLayout';
+import {
+  adaptSemanticGraph,
+  filterSemanticGraph,
+  semanticFilters,
+  semanticRelationToInteractive,
+  semanticViewForLevel,
+} from './semanticGraphAdapter';
 import type {
   GraphEvidenceOpener,
+  GraphExplorerMode,
   GraphFilters,
   GraphSelection,
   InteractiveGraphEdge,
@@ -13,6 +24,12 @@ import type {
   InteractiveGraphNodeDetail,
   InteractiveGraphPayload,
   RepositoryFetch,
+  SemanticAtlasLens,
+  SemanticEntityDetail,
+  SemanticEntityEvidence,
+  SemanticEvidenceFocus,
+  SemanticGraphPayload,
+  SemanticRelationEvidence,
 } from './graphTypes';
 import { DEFAULT_GRAPH_FILTERS, graphLevelLabel } from './graphTypes';
 
@@ -21,9 +38,11 @@ interface RepositoryGraphExplorerProps {
   activeQuery: string;
   isBuilding: boolean;
   reviewingEdgeId: string | null;
-  onBuildGraph: () => Promise<void>;
-  onReviewEdge: (edgeId: string, status: 'accepted' | 'rejected' | 'needs_review') => Promise<void>;
+  onBuildSemanticGraph: () => Promise<void>;
+  onBuildEvidenceGraph: () => Promise<void>;
+  onReviewEvidenceEdge: (edgeId: string, status: 'accepted' | 'rejected' | 'needs_review') => Promise<void>;
   onOpenEvidence: GraphEvidenceOpener;
+  onOpenMaterialView: (materialId: string, view: 'segments' | 'images' | 'observations') => void;
 }
 
 const downloadJsonFile = (filename: string, data: unknown) => {
@@ -63,68 +82,156 @@ export function RepositoryGraphExplorer({
   activeQuery,
   isBuilding,
   reviewingEdgeId,
-  onBuildGraph,
-  onReviewEdge,
+  onBuildSemanticGraph,
+  onBuildEvidenceGraph,
+  onReviewEvidenceEdge,
   onOpenEvidence,
+  onOpenMaterialView,
 }: RepositoryGraphExplorerProps) {
   const [graph, setGraph] = useState<InteractiveGraphPayload | null>(null);
+  const [semanticPayload, setSemanticPayload] = useState<SemanticGraphPayload | null>(null);
+  const [mode, setMode] = useState<GraphExplorerMode>('semantic');
   const [level, setLevel] = useState<InteractiveGraphLevel>('overview');
+  const [semanticLens, setSemanticLens] = useState<SemanticAtlasLens>('documents');
   const [searchTerm, setSearchTerm] = useState(activeQuery);
   const [submittedQuery, setSubmittedQuery] = useState(activeQuery);
-  const [filters, setFilters] = useState<GraphFilters>(DEFAULT_GRAPH_FILTERS);
+  const [filters, setFilters] = useState<GraphFilters>(() => semanticFilters());
   const [includeRejected, setIncludeRejected] = useState(false);
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [nodeDetail, setNodeDetail] = useState<InteractiveGraphNodeDetail | null>(null);
+  const [semanticDetailsByEntity, setSemanticDetailsByEntity] = useState<
+    Record<string, SemanticEntityDetail | undefined>
+  >({});
+  const [semanticEvidenceByEntity, setSemanticEvidenceByEntity] = useState<
+    Record<string, SemanticEntityEvidence | undefined>
+  >({});
+  const [semanticEvidenceFocus, setSemanticEvidenceFocus] = useState<SemanticEvidenceFocus | null>(null);
+  const [relationEvidence, setRelationEvidence] = useState<SemanticRelationEvidence | null>(null);
+  const [expandedNodeIds, setExpandedNodeIds] = useState<string[]>([]);
+  const [expandedDocumentId, setExpandedDocumentId] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [loadingSemanticEntityId, setLoadingSemanticEntityId] = useState<string | null>(null);
+  const [loadingEvidenceId, setLoadingEvidenceId] = useState<string | null>(null);
+  const [reviewingSemanticId, setReviewingSemanticId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expandedNodeIds, setExpandedNodeIds] = useState<string[]>([]);
-  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     setSearchTerm(activeQuery);
     setSubmittedQuery(activeQuery);
   }, [activeQuery]);
 
-  const loadInteractiveGraph = useCallback(async () => {
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    setNodeDetail(null);
+    setRelationEvidence(null);
+    setSemanticEvidenceFocus(null);
+  }, []);
+
+  const loadGraph = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        level,
-        include_rejected: String(includeRejected),
-        limit: '700',
-      });
       const query = submittedQuery.trim();
-      if (query.length >= 2) params.set('query', query);
-      const response = await repositoryFetch(`/graph/interactive?${params}`);
-      if (!response.ok) throw new Error(await parseGraphError(response, 'Interactive graph failed'));
-      const data = (await response.json()) as InteractiveGraphPayload;
-      setGraph(data);
-      setSelection(null);
-      setNodeDetail(null);
+      if (mode === 'semantic') {
+        const params = new URLSearchParams({
+          view: semanticViewForLevel(level),
+          include_generic: String(query.length >= 2),
+          include_rejected: String(includeRejected),
+          limit: '220',
+        });
+        if (query.length >= 2) params.set('query', query);
+        const response = await repositoryFetch(`/graph/semantic?${params}`);
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Semantic Atlas failed'));
+        const payload = (await response.json()) as SemanticGraphPayload;
+        setSemanticPayload(payload);
+        setGraph(adaptSemanticGraph(payload));
+      } else {
+        const params = new URLSearchParams({
+          level,
+          include_rejected: String(includeRejected),
+          limit: '700',
+        });
+        if (query.length >= 2) params.set('query', query);
+        const response = await repositoryFetch(`/graph/interactive?${params}`);
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Evidence Graph failed'));
+        setSemanticPayload(null);
+        setGraph((await response.json()) as InteractiveGraphPayload);
+      }
+      clearSelection();
       setExpandedNodeIds([]);
+      setExpandedDocumentId(null);
+      setSemanticDetailsByEntity({});
+      setSemanticEvidenceByEntity({});
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Interactive graph failed');
+      setError(err instanceof Error ? err.message : 'Research Atlas failed');
     } finally {
       setIsLoading(false);
     }
-  }, [includeRejected, level, repositoryFetch, submittedQuery]);
+  }, [clearSelection, includeRejected, level, mode, repositoryFetch, submittedQuery]);
 
   useEffect(() => {
-    void loadInteractiveGraph();
-  }, [loadInteractiveGraph]);
+    void loadGraph();
+  }, [loadGraph]);
 
-  const loadNodeDetail = useCallback(
+  const loadSemanticEntity = useCallback(
+    async (entityId: string) => {
+      setIsLoadingDetail(true);
+      setLoadingSemanticEntityId(entityId);
+      try {
+        const response = await repositoryFetch(
+          `/graph/entity/${encodeURIComponent(entityId)}?include_rejected=${includeRejected}`,
+        );
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Semantic entity detail failed'));
+        const detail = (await response.json()) as SemanticEntityDetail;
+        setSemanticDetailsByEntity((current) => ({ ...current, [entityId]: detail }));
+        return detail;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Semantic entity detail failed');
+        return null;
+      } finally {
+        setIsLoadingDetail(false);
+        setLoadingSemanticEntityId((current) => (current === entityId ? null : current));
+      }
+    },
+    [includeRejected, repositoryFetch],
+  );
+
+  const loadSemanticEvidence = useCallback(
+    async (entityId: string) => {
+      const cached = semanticEvidenceByEntity[entityId];
+      if (cached) return cached;
+      setLoadingEvidenceId(entityId);
+      try {
+        const response = await repositoryFetch(
+          `/graph/entity/${encodeURIComponent(entityId)}/evidence?limit=80`,
+        );
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Semantic evidence failed'));
+        const evidence = (await response.json()) as SemanticEntityEvidence;
+        setSemanticEvidenceByEntity((current) => ({ ...current, [entityId]: evidence }));
+        return evidence;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Semantic evidence failed');
+        return null;
+      } finally {
+        setLoadingEvidenceId((current) => (current === entityId ? null : current));
+      }
+    },
+    [repositoryFetch, semanticEvidenceByEntity],
+  );
+
+  const loadEvidenceNode = useCallback(
     async (nodeId: string) => {
       setIsLoadingDetail(true);
       try {
-        const params = new URLSearchParams({ include_rejected: String(includeRejected) });
-        const response = await repositoryFetch(`/graph/node/${encodeURIComponent(nodeId)}?${params}`);
-        if (!response.ok) throw new Error(await parseGraphError(response, 'Graph node detail failed'));
+        const response = await repositoryFetch(
+          `/graph/node/${encodeURIComponent(nodeId)}?include_rejected=${includeRejected}`,
+        );
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Evidence node detail failed'));
         setNodeDetail((await response.json()) as InteractiveGraphNodeDetail);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Graph node detail failed');
+        setError(err instanceof Error ? err.message : 'Evidence node detail failed');
       } finally {
         setIsLoadingDetail(false);
       }
@@ -132,48 +239,139 @@ export function RepositoryGraphExplorer({
     [includeRejected, repositoryFetch],
   );
 
-  const expandNode = useCallback(
+  const handleNodeSelect = useCallback(
     async (node: InteractiveGraphNode) => {
       setSelection({ kind: 'node', node });
       setNodeDetail(null);
-      await loadNodeDetail(node.id);
+      setRelationEvidence(null);
+      setSemanticEvidenceFocus(null);
+      if (mode === 'semantic') {
+        await Promise.all([loadSemanticEntity(node.id), loadSemanticEvidence(node.id)]);
+        return;
+      }
+      await loadEvidenceNode(node.id);
       if (expandedNodeIds.includes(node.id)) return;
       try {
-        const nextDepth = node.node_type === 'corpus' ? 1 : 2;
         const params = new URLSearchParams({
           node_id: node.id,
-          depth: String(nextDepth),
+          depth: '1',
           level,
           include_rejected: String(includeRejected),
-          limit: '350',
+          limit: '300',
         });
         const response = await repositoryFetch(`/graph/focus?${params}`);
-        if (!response.ok) throw new Error(await parseGraphError(response, 'Graph focus failed'));
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Evidence focus failed'));
         const focusGraph = (await response.json()) as InteractiveGraphPayload;
         setGraph((current) => mergeGraphPayloads(current, focusGraph));
         setExpandedNodeIds((current) => [...current, node.id]);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Graph focus failed');
+        setError(err instanceof Error ? err.message : 'Evidence focus failed');
       }
     },
-    [expandedNodeIds, includeRejected, level, loadNodeDetail, repositoryFetch],
+    [
+      expandedNodeIds,
+      includeRejected,
+      level,
+      loadEvidenceNode,
+      loadSemanticEntity,
+      loadSemanticEvidence,
+      mode,
+      repositoryFetch,
+    ],
   );
 
-  const handleEdgeSelect = (edge: InteractiveGraphEdge) => {
-    setSelection({ kind: 'edge', edge });
-    setNodeDetail(null);
+  const handleEdgeSelect = useCallback(
+    async (edge: InteractiveGraphEdge) => {
+      setSelection({ kind: 'edge', edge });
+      setNodeDetail(null);
+      setRelationEvidence(null);
+      setSemanticEvidenceFocus(null);
+      if (mode !== 'semantic' || !edge.semantic_relation) return;
+      setIsLoadingDetail(true);
+      try {
+        const response = await repositoryFetch(
+          `/graph/relation/${encodeURIComponent(edge.id)}/evidence?limit=20`,
+        );
+        if (!response.ok) throw new Error(await parseGraphError(response, 'Relation evidence failed'));
+        setRelationEvidence((await response.json()) as SemanticRelationEvidence);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Relation evidence failed');
+      } finally {
+        setIsLoadingDetail(false);
+      }
+    },
+    [mode, repositoryFetch],
+  );
+
+  const handleDocumentToggle = useCallback(
+    async (document: InteractiveGraphNode) => {
+      if (expandedDocumentId === document.id) {
+        setExpandedDocumentId(null);
+        return;
+      }
+      setExpandedDocumentId(document.id);
+      setSelection({ kind: 'node', node: document });
+      setNodeDetail(null);
+      setRelationEvidence(null);
+      setSemanticEvidenceFocus(null);
+      await Promise.all([loadSemanticEntity(document.id), loadSemanticEvidence(document.id)]);
+    },
+    [expandedDocumentId, loadSemanticEntity, loadSemanticEvidence],
+  );
+
+  const handleSemanticLensChange = (nextLens: SemanticAtlasLens) => {
+    setSemanticLens(nextLens);
+    setExpandedDocumentId(null);
+    clearSelection();
+  };
+
+  const handleModeChange = (nextMode: GraphExplorerMode) => {
+    setMode(nextMode);
+    setLevel(nextMode === 'semantic' ? 'overview' : 'documents');
+    if (nextMode === 'semantic') setSemanticLens('documents');
+    setFilters(nextMode === 'semantic' ? semanticFilters() : DEFAULT_GRAPH_FILTERS);
+    setIncludeRejected(false);
+    setExpandedDocumentId(null);
+    clearSelection();
   };
 
   const handleBuild = async () => {
-    await onBuildGraph();
-    await loadInteractiveGraph();
+    if (mode === 'semantic') await onBuildSemanticGraph();
+    else await onBuildEvidenceGraph();
+    await loadGraph();
   };
 
-  const handleReviewEdge = async (edgeId: string, status: 'accepted' | 'rejected' | 'needs_review') => {
-    await onReviewEdge(edgeId, status);
-    setSelection(null);
-    setNodeDetail(null);
-    await loadInteractiveGraph();
+  const handleReviewEvidenceEdge = async (
+    edgeId: string,
+    status: 'accepted' | 'rejected' | 'needs_review',
+  ) => {
+    await onReviewEvidenceEdge(edgeId, status);
+    clearSelection();
+    await loadGraph();
+  };
+
+  const reviewSemantic = async (
+    kind: 'relations' | 'candidates',
+    itemId: string,
+    status: 'accepted' | 'needs_review' | 'rejected',
+  ) => {
+    setReviewingSemanticId(itemId);
+    setError(null);
+    try {
+      const response = await repositoryFetch(`/graph/semantic/${kind}/${encodeURIComponent(itemId)}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_status: status }),
+      });
+      if (!response.ok) throw new Error(await parseGraphError(response, 'Semantic review failed'));
+      if (selection?.kind === 'node') await loadSemanticEntity(selection.node.id);
+      else clearSelection();
+      await loadGraph();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Semantic review failed');
+    } finally {
+      setReviewingSemanticId(null);
+    }
   };
 
   const handleIncludeRejectedChange = (value: boolean) => {
@@ -187,8 +385,18 @@ export function RepositoryGraphExplorer({
   };
 
   const handleTour = (tour: 'beginner' | 'structure' | 'concepts' | 'places_time') => {
+    if (mode === 'semantic') {
+      const nextLens: SemanticAtlasLens =
+        tour === 'concepts' ? 'concepts' : tour === 'places_time' ? 'places' : 'documents';
+      handleSemanticLensChange(nextLens);
+      if (tour === 'beginner') {
+        setSearchTerm('');
+        setSubmittedQuery('');
+      }
+      return;
+    }
     if (tour === 'beginner') {
-      setLevel('overview');
+      setLevel('documents');
       setFilters(DEFAULT_GRAPH_FILTERS);
       setSearchTerm('');
       setSubmittedQuery('');
@@ -198,8 +406,8 @@ export function RepositoryGraphExplorer({
       setLevel('documents');
       setFilters({
         ...DEFAULT_GRAPH_FILTERS,
-        nodeTypes: ['corpus', 'material', 'segment', 'image', 'observation'],
-        edgeTypes: ['contains', 'image_of', 'observation_of'],
+        nodeTypes: ['material', 'segment', 'image', 'observation'],
+        edgeTypes: ['contains', 'image_of', 'observation_of', 'mentions_concept', 'mentions_place', 'mentions_time'],
       });
       return;
     }
@@ -207,49 +415,55 @@ export function RepositoryGraphExplorer({
       setLevel('concepts');
       setFilters({
         ...DEFAULT_GRAPH_FILTERS,
-        nodeTypes: ['material', 'segment', 'image', 'observation', 'concept', 'keyword'],
-        edgeTypes: ['contains', 'has_keyword', 'mentions_concept', 'semantically_related_to', 'co_occurs_with', 'image_of', 'observation_of'],
+        nodeTypes: ['material', 'concept', 'keyword'],
+        edgeTypes: ['has_keyword', 'mentions_concept', 'semantically_related_to', 'image_of', 'observation_of'],
       });
       return;
     }
     setLevel('concepts');
     setFilters({
       ...DEFAULT_GRAPH_FILTERS,
-      nodeTypes: ['material', 'segment', 'image', 'observation', 'place', 'time_reference'],
-      edgeTypes: ['contains', 'mentions_place', 'mentions_time'],
+      nodeTypes: ['material', 'place', 'time_reference'],
+      edgeTypes: ['mentions_place', 'mentions_time'],
     });
   };
 
   const visibleGraph = useMemo(
-    () => filterInteractiveGraph(graph, filters, level, searchTerm),
-    [filters, graph, level, searchTerm],
+    () =>
+      mode === 'semantic'
+        ? filterSemanticGraph(graph, filters, '')
+        : filterInteractiveGraph(graph, filters, level, searchTerm),
+    [filters, graph, level, mode, searchTerm],
   );
-
-  const explainNote = useMemo(() => {
-    if (level === 'overview') return 'Overview mode shows the repository and documents first. Open a document to reveal its evidence structure.';
-    if (level === 'documents') return 'Document mode adds extracted sections, images, and observations so students can see how a source is structured.';
-    if (level === 'sections') return 'Section mode connects chunks and evidence objects to the concepts, places, and times they mention.';
-    return 'Concept mode emphasizes themes and entity mentions. Amber dashed links are candidates for review, not confirmed claims.';
-  }, [level]);
 
   const exportVisible = () => {
     downloadJsonFile(`${filenameToken(searchTerm || submittedQuery)}_visible_graph.json`, {
+      mode,
       level,
       filters,
       nodes: visibleGraph.nodes,
       edges: visibleGraph.edges,
+      hidden_summary: semanticPayload?.hidden_summary,
       evidence_note: graph?.evidence_note,
     });
   };
 
   const exportAll = () => {
-    if (!graph) return;
-    downloadJsonFile(`${filenameToken(searchTerm || submittedQuery)}_interactive_graph.json`, graph);
+    const payload = mode === 'semantic' ? semanticPayload : graph;
+    if (!payload) return;
+    downloadJsonFile(`${filenameToken(searchTerm || submittedQuery)}_${mode}_graph.json`, payload);
   };
 
+  const modeNote =
+    mode === 'semantic'
+      ? 'Semantic Atlas is a fixed spatial map: documents, bridge concepts, resolved places, valid periods, and review queues stay in deterministic lanes. Relationship edges appear only on focus.'
+      : 'Evidence Graph is an advanced source-traceability view. Amber dashed links are review candidates rather than confirmed claims.';
+
   return (
-    <div className={isExpanded ? 'fixed inset-4 z-[90] overflow-auto rounded-xl bg-slate-50 p-4 shadow-2xl' : 'space-y-3'}>
+    <div className={isExpanded ? 'fixed inset-4 z-[90] overflow-auto rounded-lg bg-slate-50 p-4 shadow-2xl' : 'space-y-3'}>
       <GraphControls
+        mode={mode}
+        onModeChange={handleModeChange}
         level={level}
         onLevelChange={setLevel}
         searchTerm={searchTerm}
@@ -260,7 +474,7 @@ export function RepositoryGraphExplorer({
         includeRejected={includeRejected}
         onIncludeRejectedChange={handleIncludeRejectedChange}
         onBuild={handleBuild}
-        onRefresh={loadInteractiveGraph}
+        onRefresh={loadGraph}
         onTour={handleTour}
         onExportVisible={exportVisible}
         onExportAll={exportAll}
@@ -270,83 +484,144 @@ export function RepositoryGraphExplorer({
       />
 
       {error && (
-        <div className="rounded-lg border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">
-          {error}
-        </div>
+        <div className="border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border border-slate-100 bg-white px-3 py-2">
         <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-500">
-          <span>Corpus</span>
+          <span>{mode === 'semantic' ? 'Semantic Atlas' : 'Evidence Graph'}</span>
           <span>/</span>
-          <span>{graphLevelLabel(level)}</span>
-          {expandedNodeIds.length > 0 && (
-            <>
-              <span>/</span>
-              <span>{expandedNodeIds.length} expanded</span>
-            </>
-          )}
+          <span>
+            {mode === 'semantic'
+              ? `${semanticLens.charAt(0).toUpperCase()}${semanticLens.slice(1)} lens`
+              : graphLevelLabel(level)}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-bold text-slate-400">
-            {visibleGraph.nodes.length} nodes · {visibleGraph.edges.length} links
+            {mode === 'semantic'
+              ? `${visibleGraph.nodes.filter((node) => node.node_type === 'material').length} documents / ${visibleGraph.edges.length} available relationships`
+              : `${visibleGraph.nodes.length} nodes / ${visibleGraph.edges.length} links`}
           </span>
           <button
             type="button"
             onClick={() => {
-              setLevel('overview');
+              setLevel(mode === 'semantic' ? 'overview' : 'documents');
+              if (mode === 'semantic') setSemanticLens('documents');
               setSearchTerm('');
               setSubmittedQuery('');
-              setSelection(null);
-              setNodeDetail(null);
+              clearSelection();
+              setExpandedNodeIds([]);
+              setExpandedDocumentId(null);
             }}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+            className="border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
           >
-            Back to Overview
+            Reset View
           </button>
           <button
             type="button"
             onClick={() => setIsExpanded((current) => !current)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+            className="border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
           >
             {isExpanded ? 'Exit Full Screen' : 'Full Screen'}
           </button>
         </div>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <GraphCanvas
-          nodes={visibleGraph.nodes}
-          edges={visibleGraph.edges}
-          selected={selection}
-          searchTerm={searchTerm}
-          onNodeSelect={expandNode}
-          onEdgeSelect={handleEdgeSelect}
-          onClearSelection={() => {
-            setSelection(null);
-            setNodeDetail(null);
-          }}
-        />
-        <GraphDetailPanel
-          selection={selection}
-          nodeDetail={nodeDetail}
-          isLoadingDetail={isLoadingDetail}
-          reviewingEdgeId={reviewingEdgeId}
-          onOpenEvidence={onOpenEvidence}
-          onReviewEdge={handleReviewEdge}
-          onClearFocus={() => {
-            setSelection(null);
-            setNodeDetail(null);
-            setExpandedNodeIds([]);
-          }}
-          explainNote={explainNote}
-        />
+      <div className="border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-bold leading-relaxed text-emerald-800">
+        {modeNote}
+      </div>
+
+      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        {mode === 'semantic' ? (
+          <SemanticAtlasCanvas
+            nodes={visibleGraph.nodes}
+            edges={visibleGraph.edges}
+            selected={selection}
+            evidenceFocus={semanticEvidenceFocus}
+            lens={semanticLens}
+            searchTerm={searchTerm}
+            expandedDocumentId={expandedDocumentId}
+            detailsByEntity={semanticDetailsByEntity}
+            evidenceByEntity={semanticEvidenceByEntity}
+            hiddenSummary={semanticPayload?.hidden_summary}
+            loadingDetailId={loadingSemanticEntityId}
+            loadingEvidenceId={loadingEvidenceId}
+            onLensChange={handleSemanticLensChange}
+            onNodeSelect={handleNodeSelect}
+            onEdgeSelect={handleEdgeSelect}
+            onDocumentToggle={handleDocumentToggle}
+            onEvidenceSelect={(document, item) => {
+              setSelection({ kind: 'node', node: document });
+              setSemanticEvidenceFocus({ document, item });
+            }}
+            onOpenMaterialView={onOpenMaterialView}
+          />
+        ) : (
+          <GraphCanvas
+            nodes={visibleGraph.nodes}
+            edges={visibleGraph.edges}
+            selected={selection}
+            searchTerm={searchTerm}
+            onNodeSelect={handleNodeSelect}
+            onEdgeSelect={handleEdgeSelect}
+            onClearSelection={clearSelection}
+          />
+        )}
+        {mode === 'semantic' ? (
+          <SemanticGraphDetailPanel
+            selection={selection}
+            detail={
+              selection?.kind === 'node' ? semanticDetailsByEntity[selection.node.id] || null : null
+            }
+            evidenceFocus={semanticEvidenceFocus}
+            entityEvidence={
+              selection?.kind === 'node' ? semanticEvidenceByEntity[selection.node.id] || null : null
+            }
+            relationEvidence={relationEvidence}
+            isLoading={
+              isLoadingDetail
+              || (selection?.kind === 'node' && loadingEvidenceId === selection.node.id)
+            }
+            reviewingId={reviewingSemanticId}
+            onOpenEvidence={onOpenEvidence}
+            onOpenMaterialView={onOpenMaterialView}
+            expandedDocumentId={expandedDocumentId}
+            onToggleDocument={handleDocumentToggle}
+            onRelationSelect={(relation) => handleEdgeSelect(semanticRelationToInteractive(relation))}
+            onReviewRelation={(relationId, status) => reviewSemantic('relations', relationId, status)}
+            onReviewCandidate={(candidateId, status) => reviewSemantic('candidates', candidateId, status)}
+            onClearFocus={() => {
+              clearSelection();
+              setExpandedDocumentId(null);
+            }}
+          />
+        ) : (
+          <GraphDetailPanel
+            selection={selection}
+            nodeDetail={nodeDetail}
+            isLoadingDetail={isLoadingDetail}
+            reviewingEdgeId={reviewingEdgeId}
+            onOpenEvidence={onOpenEvidence}
+            onReviewEdge={handleReviewEvidenceEdge}
+            onClearFocus={() => {
+              clearSelection();
+              setExpandedNodeIds([]);
+            }}
+            explainNote={modeNote}
+          />
+        )}
       </div>
 
       {graph && (
-        <div className="rounded-lg border border-slate-100 bg-white p-3 text-[11px] font-bold leading-relaxed text-slate-400">
-          {graph.summary.material_count} documents · {graph.summary.section_count} evidence nodes · {graph.summary.concept_count} concept/entity nodes · {graph.summary.edge_count} links.
-          {graph.summary.review_needed_count > 0 ? ` ${graph.summary.review_needed_count} links need review.` : ' No visible links need review.'}
+        <div className="border border-slate-100 bg-white p-3 text-[11px] font-bold leading-relaxed text-slate-400">
+          {graph.summary.material_count} documents / {graph.summary.concept_count} semantic/entity nodes / {graph.summary.edge_count} links.
+          {semanticPayload && (
+            <>
+              {' '}
+              {semanticPayload.hidden_summary.hidden_mentions} evidence mentions, {semanticPayload.hidden_summary.hidden_candidate_relations} candidate relations, {semanticPayload.hidden_summary.unresolved_place_mentions} unresolved place mentions, and {semanticPayload.hidden_summary.invalid_or_candidate_time_mentions} invalid or candidate time mentions are available outside the default canvas.
+            </>
+          )}
         </div>
       )}
     </div>

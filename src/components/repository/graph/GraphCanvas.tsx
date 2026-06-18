@@ -20,6 +20,19 @@ const edgeColor = (edge: InteractiveGraphEdge, isActive: boolean) => {
   return '#94a3b8';
 };
 
+const roundedRect = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) => {
+  const corner = Math.min(radius, width / 2, height / 2);
+  ctx.moveTo(x + corner, y);
+  ctx.lineTo(x + width - corner, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + corner);
+  ctx.lineTo(x + width, y + height - corner);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - corner, y + height);
+  ctx.lineTo(x + corner, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - corner);
+  ctx.lineTo(x, y + corner);
+  ctx.quadraticCurveTo(x, y, x + corner, y);
+};
+
 export function GraphCanvas({
   nodes,
   edges,
@@ -89,7 +102,7 @@ export function GraphCanvas({
           <div>
             <div className="text-sm font-black uppercase tracking-widest text-slate-400">Start Anywhere</div>
             <p className="mt-2 max-w-md text-sm leading-relaxed text-slate-500">
-              Build or load the graph, then search for a term or choose a tour. The explorer will stay evidence-grounded and keep weak links marked for review.
+              Build or load the atlas, then search for a term or choose a tour. Source evidence remains available when you select a node or relationship.
             </p>
           </div>
         </div>
@@ -109,7 +122,10 @@ export function GraphCanvas({
           minZoom={0.18}
           maxZoom={4}
           nodeRelSize={5}
-          nodeVal={(node) => Math.max(1, Math.min(12, (node as InteractiveGraphNode).degree + 1))}
+          nodeVal={(node) => {
+            const item = node as InteractiveGraphNode;
+            return Math.max(1, Math.min(18, (item.evidence_count || item.document_count || item.node_count || item.degree) + 1));
+          }}
           nodeLabel={(node) => {
             const item = node as InteractiveGraphNode;
             return `${item.label} (${item.node_type.replace(/_/g, ' ')})`;
@@ -125,7 +141,7 @@ export function GraphCanvas({
           linkWidth={(link) => {
             const edge = link as InteractiveGraphEdge;
             const active = edge.id === selectedEdgeId || edge.id === hoveredEdgeId;
-            return active ? 3 : Math.max(0.8, Math.min(2.4, edge.weight * 1.7));
+            return active ? 3.2 : Math.max(0.7, Math.min(3, edge.weight * (0.9 + edge.confidence)));
           }}
           linkLineDash={(link) => {
             const edge = link as InteractiveGraphEdge;
@@ -151,14 +167,26 @@ export function GraphCanvas({
             ctx.fillStyle = isSelected ? 'rgba(37, 99, 235, 0.18)' : isSearchMatch ? 'rgba(250, 204, 21, 0.24)' : 'rgba(148, 163, 184, 0.14)';
             ctx.fill();
             ctx.beginPath();
-            ctx.arc(item.x || 0, item.y || 0, radius, 0, 2 * Math.PI, false);
+            if (item.node_type === 'cluster') {
+              ctx.rect((item.x || 0) - radius, (item.y || 0) - radius, radius * 2, radius * 2);
+            } else if (item.node_type === 'summary_group') {
+              roundedRect(ctx, (item.x || 0) - radius * 1.15, (item.y || 0) - radius * 0.8, radius * 2.3, radius * 1.6, 5);
+            } else {
+              ctx.arc(item.x || 0, item.y || 0, radius, 0, 2 * Math.PI, false);
+            }
             ctx.fillStyle = nodeTypeColor(item.node_type);
             ctx.fill();
             ctx.lineWidth = isSelected || isActive ? 2.2 : 1;
             ctx.strokeStyle = isSelected ? '#1d4ed8' : '#ffffff';
             ctx.stroke();
 
-            const shouldLabel = isSelected || isActive || isSearchMatch || item.node_type === 'corpus' || item.node_type === 'material' || item.degree >= 8;
+            const shouldLabel =
+              isSelected
+              || isActive
+              || isSearchMatch
+              || item.is_synthetic
+              || ['material', 'collection', 'source_type'].includes(item.node_type)
+              || item.degree >= 8;
             if (!shouldLabel || globalScale < 0.55) return;
             const fontSize = Math.max(7, 11 / globalScale);
             const label = item.label.length > 28 ? `${item.label.slice(0, 25)}...` : item.label;
