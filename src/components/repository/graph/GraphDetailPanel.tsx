@@ -56,7 +56,7 @@ export function GraphDetailPanel({
 }: GraphDetailPanelProps) {
   if (!selection) {
     return (
-      <aside className="min-h-[540px] rounded-lg border border-slate-100 bg-white p-4">
+      <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Start Anywhere</div>
         <h5 className="mt-2 text-lg font-black text-slate-800">Explore the repository as evidence.</h5>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
@@ -74,7 +74,7 @@ export function GraphDetailPanel({
   if (selection.kind === 'edge') {
     const edge = selection.edge;
     return (
-      <aside className="min-h-[540px] rounded-lg border border-slate-100 bg-white p-4">
+      <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Relationship</div>
           <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${statusClass(edge.review_status)}`}>
@@ -145,7 +145,7 @@ export function GraphDetailPanel({
   const isConceptLike = ['concept', 'keyword', 'place', 'time_reference', 'author'].includes(node.node_type);
 
   return (
-    <aside className="min-h-[540px] rounded-lg border border-slate-100 bg-white p-4">
+    <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Selected Node</div>
         <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${statusClass(node.review_status)}`}>

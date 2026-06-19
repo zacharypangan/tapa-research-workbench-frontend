@@ -326,33 +326,31 @@ export function SemanticAtlasCanvas({
   ].slice(0, 3);
 
   return (
-    <section className="min-h-[620px] overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/95 px-4 py-3">
-        <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-300">
-            Semantic map canvas
-          </div>
-          <p className="mt-1 text-[11px] font-bold text-slate-500">
-            Fixed positions · persistent labels · relationships revealed on focus
-          </p>
-        </div>
+    <section className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
         <SemanticLensPanel lens={lens} counts={counts} onLensChange={onLensChange} />
-        <div className="flex gap-2 text-[9px] font-black uppercase tracking-wider text-slate-500">
-          <span className="rounded-full border border-slate-800 px-2 py-1">Solid accepted</span>
-          <span className="rounded-full border border-amber-500/30 px-2 py-1 text-amber-300">Dashed review</span>
+        <div className="flex gap-2 text-[8px] font-black uppercase tracking-wider text-slate-400">
+          <span className="flex items-center gap-1">
+            <span className="h-0.5 w-4 bg-emerald-600" />
+            Accepted
+          </span>
+          <span className="flex items-center gap-1 text-amber-700">
+            <span className="w-4 border-t border-dashed border-amber-600" />
+            Review
+          </span>
         </div>
       </div>
 
-      <div className="max-h-[760px] overflow-auto">
+      <div className="max-h-[660px] overflow-auto">
         <div
           style={{
             width: layout.width,
             height: layout.height,
             backgroundImage:
-              'linear-gradient(rgba(148,163,184,0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.055) 1px, transparent 1px)',
-            backgroundSize: '28px 28px',
+              'linear-gradient(rgba(148,163,184,0.10) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.10) 1px, transparent 1px)',
+            backgroundSize: '24px 24px',
           }}
-          className="relative bg-slate-950"
+          className="relative bg-slate-50/70"
         >
           <SemanticAtlasEdgeLayer
             width={layout.width}
@@ -365,19 +363,19 @@ export function SemanticAtlasCanvas({
           />
 
           {displayEdges.length > 0 && (
-            <div className="absolute left-[360px] top-5 z-40 flex max-w-[760px] flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[8px] font-black uppercase tracking-[0.18em] text-slate-500">
+            <div className="absolute left-[320px] top-3 z-40 flex max-w-[680px] flex-wrap items-center gap-1">
+              <span className="mr-1 text-[8px] font-black uppercase tracking-[0.18em] text-slate-400">
                 Visible paths
               </span>
               {pathCallouts.map((edge) => (
                 <span
                   key={`path-label:${edge.id}`}
-                  className={`rounded-full border bg-slate-950/90 px-2.5 py-1 text-[9px] font-bold ${
+                  className={`rounded-full border bg-white/95 px-2 py-0.5 text-[8px] font-bold shadow-sm ${
                     edge.kind === 'related_document'
-                      ? 'border-cyan-400/40 text-cyan-200'
+                      ? 'border-amber-200 text-amber-800'
                       : edge.status === 'needs_review' || edge.status === 'unreviewed'
-                        ? 'border-amber-400/40 text-amber-200'
-                        : 'border-emerald-400/40 text-emerald-200'
+                        ? 'border-orange-200 text-orange-800'
+                        : 'border-emerald-200 text-emerald-800'
                   }`}
                 >
                   {edge.label}
@@ -424,13 +422,13 @@ export function SemanticAtlasCanvas({
                 width: group.width,
                 height: group.height,
               }}
-              className="absolute z-[1] rounded-2xl border border-blue-300/15 bg-blue-950/15"
+              className="absolute z-[1] rounded-xl border border-amber-200/80 bg-white/45"
             >
-              <div className="flex items-center justify-between px-4 pt-3">
-                <span className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-200/80">
+              <div className="flex items-center justify-between px-3 pt-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-900">
                   {group.label}
                 </span>
-                <span className="text-[9px] font-black uppercase tracking-wider text-blue-300/40">
+                <span className="text-[8px] font-black uppercase tracking-wider text-slate-400">
                   {group.count} · {group.basis.replace(/_/g, ' ')}
                 </span>
               </div>

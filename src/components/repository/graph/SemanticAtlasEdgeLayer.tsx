@@ -100,10 +100,10 @@ const pointToPositionPath = (
 };
 
 const edgeColor = (edge: SemanticAtlasDisplayEdge) => {
-  if (edge.kind === 'related_document') return '#67e8f9';
-  if (edge.status === 'needs_review' || edge.status === 'unreviewed') return '#fbbf24';
-  if (edge.status === 'rejected') return '#fb7185';
-  return '#6ee7b7';
+  if (edge.kind === 'related_document') return '#b45309';
+  if (edge.status === 'needs_review' || edge.status === 'unreviewed') return '#d97706';
+  if (edge.status === 'rejected') return '#e11d48';
+  return '#059669';
 };
 
 export function SemanticAtlasEdgeLayer({
@@ -123,16 +123,6 @@ export function SemanticAtlasEdgeLayer({
       viewBox={`0 0 ${width} ${height}`}
       className="pointer-events-none absolute inset-0 z-10 overflow-visible"
     >
-      <defs>
-        <filter id="semantic-atlas-glow" x="-30%" y="-30%" width="160%" height="160%">
-          <feGaussianBlur stdDeviation="2.2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
       {edges.map((edge) => {
         const source = positions.get(edge.sourceId);
         const target = positions.get(edge.targetId);
@@ -140,8 +130,8 @@ export function SemanticAtlasEdgeLayer({
         const geometry = endpointPath(source, target);
         const color = edgeColor(edge);
         const widthForEdge = Math.max(
-          1.5,
-          Math.min(5.5, 1 + Math.log1p(edge.evidenceCount) + edge.confidence),
+          1.25,
+          Math.min(4.5, 0.8 + Math.log1p(edge.evidenceCount) + edge.confidence),
         );
         const isDashed = edge.kind === 'related_document'
           || edge.status === 'needs_review'
@@ -156,8 +146,7 @@ export function SemanticAtlasEdgeLayer({
               strokeWidth={widthForEdge}
               strokeDasharray={isDashed ? '8 6' : undefined}
               strokeLinecap="round"
-              opacity={0.82}
-              filter="url(#semantic-atlas-glow)"
+              opacity={0.72}
             />
             <path
               d={geometry.path}
@@ -178,14 +167,14 @@ export function SemanticAtlasEdgeLayer({
                   width={Math.min(236, 36 + edge.label.length * 5.8)}
                   height={20}
                   rx={10}
-                  fill="#020617"
+                  fill="#ffffff"
                   stroke={color}
                   strokeOpacity={0.5}
                 />
                 <text
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  fill="#e2e8f0"
+                  fill="#475569"
                   fontSize="9"
                   fontWeight="700"
                 >
@@ -207,12 +196,11 @@ export function SemanticAtlasEdgeLayer({
             <path
               d={path}
               fill="none"
-              stroke="#fde047"
+              stroke="#ca8a04"
               strokeWidth={3}
               strokeDasharray="5 4"
               strokeLinecap="round"
-              opacity={0.95}
-              filter="url(#semantic-atlas-glow)"
+              opacity={0.88}
             />
           </g>
         );

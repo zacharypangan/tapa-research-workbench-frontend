@@ -60,7 +60,7 @@ export function SemanticGraphDetailPanel({
   if (evidenceFocus) {
     const { document, item } = evidenceFocus;
     return (
-      <aside className="min-h-[540px] border border-yellow-200 bg-white p-4">
+      <aside className="min-h-[520px] rounded-xl border border-yellow-200 bg-white p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-black uppercase tracking-widest text-yellow-700">
             Contained Evidence
@@ -120,7 +120,7 @@ export function SemanticGraphDetailPanel({
 
   if (!selection) {
     return (
-      <aside className="min-h-[540px] border border-slate-100 bg-white p-4">
+      <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Start Anywhere</div>
         <h5 className="mt-2 text-lg font-black text-slate-800">Follow a meaningful connection.</h5>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
@@ -134,7 +134,7 @@ export function SemanticGraphDetailPanel({
     const relation = selection.edge.semantic_relation;
     if (!relation) return null;
     return (
-      <aside className="min-h-[540px] border border-slate-100 bg-white p-4">
+      <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Semantic Relation</div>
           <span className={`px-2 py-1 text-[10px] font-black uppercase tracking-wider ${statusClass(relation.status)}`}>
@@ -200,7 +200,7 @@ export function SemanticGraphDetailPanel({
   const materialId = typeof entity.properties.material_id === 'string' ? entity.properties.material_id : null;
 
   return (
-    <aside className="min-h-[540px] border border-slate-100 bg-white p-4">
+    <aside className="min-h-[520px] rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Semantic Entity</div>
         {entity.is_bridge_entity && (

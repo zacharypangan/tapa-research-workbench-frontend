@@ -41,32 +41,32 @@ export interface SemanticAtlasLayout {
   nodePositions: AtlasNodePosition[];
 }
 
-export const DOCUMENT_NODE_WIDTH = 316;
-export const DOCUMENT_NODE_HEIGHT = 94;
-export const EXPANDED_DOCUMENT_WIDTH = 660;
-export const EXPANDED_DOCUMENT_HEIGHT = 268;
-export const EVIDENCE_ITEM_LEFT = 24;
-export const EVIDENCE_ITEM_TOP = 186;
-export const EVIDENCE_ITEM_WIDTH = 132;
-export const EVIDENCE_ITEM_HEIGHT = 54;
-export const EVIDENCE_ITEM_GAP = 10;
+export const DOCUMENT_NODE_WIDTH = 220;
+export const DOCUMENT_NODE_HEIGHT = 76;
+export const EXPANDED_DOCUMENT_WIDTH = 684;
+export const EXPANDED_DOCUMENT_HEIGHT = 224;
+export const EVIDENCE_ITEM_LEFT = 16;
+export const EVIDENCE_ITEM_TOP = 140;
+export const EVIDENCE_ITEM_WIDTH = 126;
+export const EVIDENCE_ITEM_HEIGHT = 48;
+export const EVIDENCE_ITEM_GAP = 8;
 
-const CANVAS_WIDTH = 1184;
-const DOCUMENT_LANE_X = 28;
-const DOCUMENT_LANE_Y = 74;
-const DOCUMENT_LANE_WIDTH = 716;
-const DOCUMENT_GROUP_GAP = 18;
-const DOCUMENT_CARD_GAP = 12;
-const DOCUMENT_GROUP_INSET = 16;
-const DOCUMENT_GROUP_HEADER = 38;
-const RIGHT_LANE_X = 768;
-const RIGHT_LANE_WIDTH = 388;
-const RIGHT_LANE_GAP = 18;
+const CANVAS_WIDTH = 1120;
+const DOCUMENT_LANE_X = 18;
+const DOCUMENT_LANE_Y = 58;
+const DOCUMENT_LANE_WIDTH = 720;
+const DOCUMENT_GROUP_GAP = 10;
+const DOCUMENT_CARD_GAP = 8;
+const DOCUMENT_GROUP_INSET = 12;
+const DOCUMENT_GROUP_HEADER = 30;
+const RIGHT_LANE_X = 752;
+const RIGHT_LANE_WIDTH = 350;
+const RIGHT_LANE_GAP = 10;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const entityNodeWidth = (node: InteractiveGraphNode, maxWidth: number) =>
-  clamp(70 + node.label.length * 5.4, 104, Math.min(188, maxWidth));
+  clamp(62 + node.label.length * 5, 94, Math.min(170, maxWidth));
 
 const layoutEntityLane = (
   id: string,
@@ -78,11 +78,11 @@ const layoutEntityLane = (
   width: number,
   accent: AtlasLaneLayout['accent'],
 ) => {
-  const innerX = x + 14;
-  const innerWidth = width - 28;
-  const startY = y + 54;
-  const nodeHeight = 42;
-  const gap = 9;
+  const innerX = x + 10;
+  const innerWidth = width - 20;
+  const startY = y + 42;
+  const nodeHeight = 34;
+  const gap = 6;
   let cursorX = innerX;
   let cursorY = startY;
   const positions: AtlasNodePosition[] = [];
@@ -105,8 +105,8 @@ const layoutEntityLane = (
     cursorX += widthForNode + gap;
   });
 
-  const contentBottom = positions.length > 0 ? cursorY + nodeHeight + 14 : startY + 38;
-  const height = Math.max(116, contentBottom - y);
+  const contentBottom = positions.length > 0 ? cursorY + nodeHeight + 10 : startY + 28;
+  const height = Math.max(92, contentBottom - y);
   return {
     lane: { id, label, description, x, y, width, height, accent } satisfies AtlasLaneLayout,
     positions,
@@ -156,7 +156,7 @@ export const buildSemanticAtlasLayout = (
         column = 0;
       } else {
         column += 1;
-        if (column === 2) {
+        if (column === 3) {
           cardY += DOCUMENT_NODE_HEIGHT + DOCUMENT_CARD_GAP;
           column = 0;
         }
@@ -164,21 +164,21 @@ export const buildSemanticAtlasLayout = (
     });
 
     if (column > 0) cardY += DOCUMENT_NODE_HEIGHT + DOCUMENT_CARD_GAP;
-    const groupHeight = Math.max(142, cardY - groupY + 4);
+    const groupHeight = Math.max(116, cardY - groupY + 2);
     documentGroupLayouts.push({
       id: group.id,
       label: group.label,
       basis: group.basis,
       count: group.documents.length,
-      x: DOCUMENT_LANE_X + 10,
+      x: DOCUMENT_LANE_X + 6,
       y: groupY,
-      width: DOCUMENT_LANE_WIDTH - 20,
+      width: DOCUMENT_LANE_WIDTH - 12,
       height: groupHeight,
     });
     documentCursorY += groupHeight + DOCUMENT_GROUP_GAP;
   });
 
-  const documentLaneHeight = Math.max(260, documentCursorY - DOCUMENT_LANE_Y + 2);
+  const documentLaneHeight = Math.max(220, documentCursorY - DOCUMENT_LANE_Y + 2);
   const lanes: AtlasLaneLayout[] = [
     {
       id: 'documents',
@@ -263,14 +263,14 @@ export const buildSemanticAtlasLayout = (
     x: RIGHT_LANE_X,
     y: rightCursorY,
     width: RIGHT_LANE_WIDTH,
-    height: 142,
+    height: 108,
     accent: 'rose',
   });
 
-  const rightBottom = rightCursorY + 142;
+  const rightBottom = rightCursorY + 108;
   return {
     width: CANVAS_WIDTH,
-    height: Math.max(DOCUMENT_LANE_Y + documentLaneHeight, rightBottom) + 30,
+    height: Math.max(DOCUMENT_LANE_Y + documentLaneHeight, rightBottom) + 18,
     lanes,
     documentGroups: documentGroupLayouts,
     nodePositions,

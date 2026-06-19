@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { shortDocumentTitle } from './atlasLayout';
 import type { AtlasNodePosition } from './semanticAtlasLayout';
 
 interface SemanticAtlasNodeProps {
@@ -15,11 +14,11 @@ interface SemanticAtlasNodeProps {
 }
 
 const entityTone = (nodeType: string) => {
-  if (nodeType === 'concept') return 'border-emerald-300/70 bg-emerald-950/90 text-emerald-50';
-  if (nodeType === 'place') return 'border-amber-300/70 bg-amber-950/90 text-amber-50';
-  if (nodeType === 'time_period') return 'border-violet-300/70 bg-violet-950/90 text-violet-50';
-  if (nodeType === 'agent') return 'border-cyan-300/70 bg-cyan-950/90 text-cyan-50';
-  return 'border-slate-500 bg-slate-900 text-slate-50';
+  if (nodeType === 'concept') return 'border-emerald-200 bg-emerald-50 text-emerald-900';
+  if (nodeType === 'place') return 'border-amber-200 bg-amber-50 text-amber-900';
+  if (nodeType === 'time_period') return 'border-violet-200 bg-violet-50 text-violet-900';
+  if (nodeType === 'agent') return 'border-sky-200 bg-sky-50 text-sky-900';
+  return 'border-slate-200 bg-white text-slate-800';
 };
 
 export function SemanticAtlasNode({
@@ -41,11 +40,11 @@ export function SemanticAtlasNode({
     height: position.height,
   };
   const emphasis = isSelected
-    ? 'ring-2 ring-cyan-300 shadow-[0_0_28px_rgba(34,211,238,0.3)]'
+    ? 'ring-2 ring-amber-600 shadow-md'
     : isSearchMatch
-      ? 'ring-2 ring-yellow-300 shadow-[0_0_24px_rgba(253,224,71,0.24)]'
+      ? 'ring-2 ring-yellow-400 shadow-sm'
       : isFocused
-        ? 'ring-1 ring-emerald-300/80 shadow-[0_0_20px_rgba(52,211,153,0.2)]'
+        ? 'ring-1 ring-emerald-500 shadow-sm'
         : '';
 
   if (node.node_type !== 'material') {
@@ -55,12 +54,12 @@ export function SemanticAtlasNode({
         style={style}
         aria-pressed={isSelected}
         onClick={onSelect}
-        className={`absolute z-20 overflow-hidden rounded-full border px-3 text-left transition-all duration-200 ${entityTone(node.node_type)} ${emphasis} ${
-          isDimmed ? 'opacity-25 saturate-50' : 'opacity-100'
+        className={`absolute z-20 overflow-hidden rounded-full border px-2.5 text-left shadow-sm transition-all duration-200 ${entityTone(node.node_type)} ${emphasis} ${
+          isDimmed ? 'opacity-30 saturate-50' : 'opacity-100'
         }`}
       >
-        <span className="block truncate text-[11px] font-black leading-tight">{node.label}</span>
-        <span className="mt-0.5 block truncate text-[9px] font-bold uppercase tracking-wider opacity-65">
+        <span className="block truncate text-[10px] font-black leading-tight">{node.label}</span>
+        <span className="mt-0.5 block truncate text-[8px] font-bold uppercase tracking-wider opacity-55">
           {node.document_count || 0} docs · {node.evidence_count || 0} evidence
         </span>
       </button>
@@ -72,38 +71,43 @@ export function SemanticAtlasNode({
   return (
     <article
       style={style}
-      className={`absolute z-20 overflow-hidden rounded-2xl border border-blue-300/50 bg-slate-900/95 text-slate-50 transition-all duration-200 ${emphasis} ${
-        isDimmed ? 'opacity-25 saturate-50' : 'opacity-100'
+      className={`absolute z-20 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-sm transition-all duration-200 ${emphasis} ${
+        isDimmed ? 'opacity-30 saturate-50' : 'opacity-100'
       } ${isExpanded ? 'z-30' : ''}`}
     >
       <button
         type="button"
         aria-pressed={isSelected}
         onClick={onSelect}
-        className="flex h-[94px] w-full items-start gap-3 px-4 py-3 text-left hover:bg-blue-400/10"
+        className="block h-[76px] w-full px-3 py-2 text-left hover:bg-amber-50"
       >
-        <span className="min-w-0 flex-1">
-          <span className="block text-[9px] font-black uppercase tracking-[0.18em] text-blue-300">
-            Document
+        <span className="block min-w-0 pr-10">
+          <span
+            className="block overflow-hidden text-xs font-black leading-[1.25] text-slate-800"
+            style={{
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 2,
+            }}
+            title={node.label}
+          >
+            {node.label}
           </span>
-          <span className="mt-1 block text-sm font-black leading-snug text-white" title={node.label}>
-            {shortDocumentTitle(node.label, 7)}
-          </span>
-          <span className="mt-1.5 block truncate text-[10px] font-bold text-slate-400">
+          <span className="mt-1 block truncate pr-8 text-[9px] font-bold text-slate-400">
             {metadata || 'Repository source'}
           </span>
         </span>
-        <span className="shrink-0 rounded-full bg-blue-400/15 px-2 py-1 text-[10px] font-black text-blue-200">
-          {node.degree || node.evidence_count || 0}
-        </span>
       </button>
+      <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-slate-500">
+        {node.degree || node.evidence_count || 0}
+      </span>
       {onToggleExpand && (
         <button
           type="button"
           aria-expanded={isExpanded}
           onClick={onToggleExpand}
-          className={`absolute right-3 z-10 rounded-full border border-blue-300/25 bg-slate-950/80 px-2 py-1 text-[8px] font-black uppercase tracking-wider text-blue-200 hover:border-cyan-300 hover:text-cyan-100 ${
-            isExpanded ? 'top-[66px]' : 'bottom-2'
+          className={`absolute right-2 z-10 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-amber-700 shadow-sm hover:border-amber-300 hover:bg-amber-50 ${
+            isExpanded ? 'top-[52px]' : 'bottom-2'
           }`}
         >
           {isExpanded ? 'Hide evidence' : 'Expand'}

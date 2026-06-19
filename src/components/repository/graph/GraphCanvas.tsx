@@ -44,7 +44,7 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
-  const [size, setSize] = useState({ width: 760, height: 540 });
+  const [size, setSize] = useState({ width: 760, height: 520 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
@@ -96,9 +96,9 @@ export function GraphCanvas({
   const graphData = useMemo(() => ({ nodes, links: edges }), [edges, nodes]);
 
   return (
-    <div ref={containerRef} className="min-h-[540px] overflow-hidden rounded-lg border border-slate-100 bg-white">
+    <div ref={containerRef} className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200 bg-white">
       {nodes.length === 0 ? (
-        <div className="flex h-[540px] items-center justify-center p-6 text-center">
+        <div className="flex h-[520px] items-center justify-center p-6 text-center">
           <div>
             <div className="text-sm font-black uppercase tracking-widest text-slate-400">Start Anywhere</div>
             <p className="mt-2 max-w-md text-sm leading-relaxed text-slate-500">

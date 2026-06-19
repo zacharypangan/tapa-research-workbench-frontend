@@ -36,21 +36,21 @@ export function ReviewQueueChips({
   return (
     <div
       style={{
-        left: lane.x + 14,
-        top: lane.y + 55,
-        width: lane.width - 28,
+        left: lane.x + 10,
+        top: lane.y + 42,
+        width: lane.width - 20,
       }}
-      className="absolute z-20 grid grid-cols-3 gap-2"
+      className="absolute z-20 grid grid-cols-3 gap-1.5"
     >
       {queues.map((queue) => (
         <button
           key={queue.id}
           type="button"
           onClick={queue.action}
-          className="rounded-2xl border border-rose-300/30 bg-slate-950/75 px-3 py-2 text-left text-rose-100 hover:border-rose-300 hover:bg-rose-400/10"
+          className="rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-left text-rose-800 shadow-sm hover:border-rose-300 hover:bg-rose-50"
         >
-          <span className="block text-lg font-black">{queue.count}</span>
-          <span className="mt-0.5 block text-[9px] font-black uppercase tracking-wider text-rose-200/70">
+          <span className="block text-sm font-black">{queue.count}</span>
+          <span className="mt-0.5 block truncate text-[8px] font-black uppercase tracking-wider text-rose-500">
             {queue.label}
           </span>
         </button>

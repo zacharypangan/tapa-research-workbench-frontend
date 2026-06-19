@@ -56,9 +56,9 @@ export function DocumentEvidenceCluster({
   const connectedTimes = detail?.connected_entities.filter((entity) => entity.type === 'time_period').length || 0;
 
   return (
-    <div className="relative h-[174px] border-t border-blue-300/20 bg-slate-950/80">
-      <div className="absolute left-4 right-4 top-3 flex items-start justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
+    <div className="relative h-[148px] border-t border-slate-100 bg-slate-50">
+      <div className="absolute left-3 right-3 top-2 flex items-start justify-between gap-2">
+        <div className="flex flex-wrap gap-1">
           {GROUPS.map((group) => {
             const count = items.filter((item) => item.evidence_type === group.id).length;
             const isActive = activeEvidenceType === group.id;
@@ -68,10 +68,10 @@ export function DocumentEvidenceCluster({
                 type="button"
                 aria-pressed={isActive}
                 onClick={() => onEvidenceTypeChange(group.id)}
-                className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${
+                className={`rounded-full border px-2 py-0.5 text-[8px] font-black uppercase tracking-wider ${
                   isActive
-                    ? 'border-cyan-300 bg-cyan-300 text-slate-950'
-                    : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-cyan-400'
+                    ? 'border-amber-700 bg-amber-700 text-white'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:text-amber-800'
                 }`}
               >
                 {group.label} {count}
@@ -79,27 +79,21 @@ export function DocumentEvidenceCluster({
             );
           })}
         </div>
-        <div className="flex shrink-0 gap-1 text-[9px] font-black uppercase tracking-wider">
-          <span className="rounded-full bg-emerald-400/15 px-2 py-1 text-emerald-200">
-            Concepts {connectedConcepts}
-          </span>
-          <span className="rounded-full bg-amber-400/15 px-2 py-1 text-amber-200">
-            Places {connectedPlaces}
-          </span>
-          <span className="rounded-full bg-violet-400/15 px-2 py-1 text-violet-200">
-            Time {connectedTimes}
-          </span>
+        <div className="flex shrink-0 gap-2 pt-0.5 text-[8px] font-black uppercase tracking-wider text-slate-400">
+          <span className="text-emerald-700">C {connectedConcepts}</span>
+          <span className="text-amber-700">P {connectedPlaces}</span>
+          <span className="text-violet-700">T {connectedTimes}</span>
         </div>
       </div>
 
       {isLoading && items.length === 0 && (
-        <div className="absolute left-6 top-[94px] text-xs font-bold text-slate-400">
+        <div className="absolute left-4 top-[72px] text-xs font-bold text-slate-400">
           Loading contained evidence…
         </div>
       )}
 
       {!isLoading && activeItems.length === 0 && (
-        <div className="absolute left-6 top-[94px] text-xs font-bold text-slate-500">
+        <div className="absolute left-4 top-[72px] text-xs font-bold text-slate-500">
           No {formatEvidenceLabel(activeEvidenceType)} evidence is available in this document.
         </div>
       )}
@@ -111,28 +105,28 @@ export function DocumentEvidenceCluster({
           onClick={() => onEvidenceSelect(item)}
           style={{
             left: EVIDENCE_ITEM_LEFT + index * (EVIDENCE_ITEM_WIDTH + EVIDENCE_ITEM_GAP),
-            top: EVIDENCE_ITEM_TOP - 94,
+            top: EVIDENCE_ITEM_TOP - 76,
             width: EVIDENCE_ITEM_WIDTH,
             height: EVIDENCE_ITEM_HEIGHT,
           }}
-          className={`absolute overflow-hidden rounded-xl border px-2.5 py-2 text-left ${
+          className={`absolute overflow-hidden rounded-lg border px-2 py-1.5 text-left shadow-sm ${
             selectedEvidenceId === item.id
-              ? 'border-yellow-300 bg-yellow-300/15 ring-1 ring-yellow-300'
-              : 'border-slate-600 bg-slate-900 hover:border-cyan-300 hover:bg-cyan-400/10'
+              ? 'border-yellow-400 bg-yellow-50 ring-1 ring-yellow-400'
+              : 'border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50'
           }`}
           title={item.evidence_ref.snippet || item.surface_text || formatEvidenceLabel(item.evidence_type)}
         >
-          <span className="block truncate text-[9px] font-black uppercase tracking-wider text-cyan-200">
+          <span className="block truncate text-[8px] font-black uppercase tracking-wider text-amber-700">
             {item.evidence_ref.page_ref || item.evidence_ref.source_locator || formatEvidenceLabel(item.evidence_type)}
           </span>
-          <span className="mt-1 block text-[10px] font-bold leading-snug text-slate-200">
+          <span className="mt-0.5 block text-[9px] font-bold leading-snug text-slate-600">
             {truncateText(item.surface_text || item.evidence_ref.snippet || 'Open evidence', 46)}
           </span>
         </button>
       ))}
 
       {materialId && (
-        <div className="absolute bottom-2 right-3 flex gap-1">
+        <div className="absolute bottom-1.5 right-3 flex gap-2">
           {([
             ['segments', 'Open sections'],
             ['images', 'Images'],
@@ -142,7 +136,7 @@ export function DocumentEvidenceCluster({
               key={view}
               type="button"
               onClick={() => onOpenMaterialView(materialId, view)}
-              className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-cyan-200"
+              className="text-[8px] font-black uppercase tracking-wider text-slate-400 hover:text-amber-800"
             >
               {label}
             </button>

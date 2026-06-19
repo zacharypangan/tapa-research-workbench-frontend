@@ -18,27 +18,30 @@ const LENSES: Array<{
 
 export function SemanticLensPanel({ lens, counts, onLensChange }: SemanticLensPanelProps) {
   return (
-    <nav aria-label="Semantic Atlas lenses" className="flex flex-wrap items-center gap-2">
-      <span className="mr-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">
-        Focus lens
+    <nav aria-label="Semantic Atlas lenses" className="flex flex-wrap items-center gap-1">
+      <span className="mr-1 text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">
+        Lens
       </span>
       {LENSES.map((item) => {
         const isActive = lens === item.id;
+        const count = counts[item.id] || 0;
+        const isEmpty = item.id !== 'documents' && count === 0;
         return (
           <button
             key={item.id}
             type="button"
             aria-pressed={isActive}
+            disabled={isEmpty}
             onClick={() => onLensChange(item.id)}
-            className={`rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider transition ${
+            className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider transition ${
               isActive
-                ? 'border-cyan-300 bg-cyan-300 text-slate-950'
-                : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 hover:text-cyan-200'
+                ? 'border-amber-700 bg-amber-700 text-white'
+                : 'border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-800 disabled:cursor-not-allowed disabled:opacity-35'
             }`}
           >
             {item.label}
-            <span className={`ml-1.5 ${isActive ? 'text-slate-700' : 'text-slate-500'}`}>
-              {counts[item.id] || 0}
+            <span className={`ml-1.5 ${isActive ? 'text-amber-100' : 'text-slate-400'}`}>
+              {count}
             </span>
           </button>
         );
