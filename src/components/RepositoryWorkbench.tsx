@@ -55,7 +55,14 @@ const WORKFLOW_STATUS_ORDER = [
   'needs_review',
 ];
 
-export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
+export default function RepositoryWorkbench({
+  onOpenTutorial,
+  activeTutorialTarget,
+  onTutorialAction,
+  initialFocus,
+  focusSignal,
+  headerNavigation,
+}: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -1282,6 +1289,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
             <div>
               <h2 className="text-sm font-black uppercase tracking-[0.18em]">Research Workbench</h2>
             </div>
+            {headerNavigation}
           </div>
           <div className="flex items-center gap-3">
             {onOpenTutorial && (

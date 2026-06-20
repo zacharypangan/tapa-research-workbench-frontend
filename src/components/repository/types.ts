@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 export interface RepositoryFile {
   id: string;
   material_id: string;
@@ -47,6 +49,7 @@ export interface RepositoryWorkbenchProps {
   onTutorialAction?: (target: string) => void;
   initialFocus?: 'search';
   focusSignal?: number;
+  headerNavigation?: ReactNode;
 }
 
 export interface ExtractedPreview {
