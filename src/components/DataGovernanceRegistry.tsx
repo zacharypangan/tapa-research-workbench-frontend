@@ -198,7 +198,7 @@ export function DataGovernanceRegistry({
         <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5">
           <div className="flex min-w-0 items-center gap-4 overflow-x-auto">
             <h2 className="hidden shrink-0 text-sm font-black uppercase tracking-[0.18em] lg:block">
-              Research Workbench
+              Data Governance
             </h2>
             {headerNavigation}
           </div>

@@ -62,6 +62,7 @@ export default function RepositoryWorkbench({
   initialFocus,
   focusSignal,
   headerNavigation,
+  evidenceNavigation,
 }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -192,10 +193,10 @@ export default function RepositoryWorkbench({
     ).length;
   }, [observations]);
 
-  const chatAssistantReady = Boolean((aiStatus as any)?.chat_configured ?? aiStatus?.provider_configured);
+  const chatAssistantReady = Boolean(aiStatus?.chat_configured ?? aiStatus?.provider_configured);
   const hasExplicitEmbeddingStatus = Boolean(aiStatus && 'embedding_configured' in aiStatus);
   const embeddingAssistantReady = hasExplicitEmbeddingStatus
-    ? Boolean((aiStatus as any)?.embedding_configured)
+    ? Boolean(aiStatus?.embedding_configured)
     : Boolean(aiStatus?.provider_configured);
   const evidenceAssistantReady = Boolean(chatAssistantReady && embeddingAssistantReady);
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
@@ -416,18 +417,38 @@ export default function RepositoryWorkbench({
     setObservationForm((current) => ({ ...current, [key]: value }));
   };
 
-  const openAnnotationWorkspace = (
-    materialId: string,
-    tab: 'segments' | 'images' | 'links' | 'observations' | 'runs' = 'segments',
-    segmentId?: number | string | null,
-    imageId?: string | null,
-  ) => {
-    setSelectedId(materialId);
-    setExtractedModalTab(tab);
-    setTargetSegmentId(segmentId ?? null);
-    setTargetImageId(imageId ?? null);
-    setIsExtractedModalOpen(true);
-  };
+  const openAnnotationWorkspace = useCallback(
+    (
+      materialId: string,
+      tab: 'segments' | 'images' | 'links' | 'observations' | 'runs' = 'segments',
+      segmentId?: number | string | null,
+      imageId?: string | null,
+    ) => {
+      setSelectedId(materialId);
+      setExtractedModalTab(tab);
+      setTargetSegmentId(segmentId ?? null);
+      setTargetImageId(imageId ?? null);
+      setIsExtractedModalOpen(true);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!evidenceNavigation?.material_id) return;
+    const tab = evidenceNavigation.view || (
+      evidenceNavigation.image_id
+        ? 'images'
+        : evidenceNavigation.observation_id
+          ? 'observations'
+          : 'segments'
+    );
+    openAnnotationWorkspace(
+      evidenceNavigation.material_id,
+      tab,
+      evidenceNavigation.segment_id,
+      evidenceNavigation.image_id,
+    );
+  }, [evidenceNavigation, openAnnotationWorkspace]);
 
   const resetObservationForm = () => {
     setObservationForm(EMPTY_OBSERVATION_FORM);

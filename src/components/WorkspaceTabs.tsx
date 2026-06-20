@@ -1,4 +1,4 @@
-export type WorkspaceView = 'research' | 'governance';
+export type WorkspaceView = 'research' | 'atlas' | 'governance';
 
 interface WorkspaceTabsProps {
   activeView: WorkspaceView;
@@ -7,7 +7,8 @@ interface WorkspaceTabsProps {
 
 const WORKSPACE_TABS = [
   { id: 'research', label: 'Research' },
-  { id: 'governance', label: 'Data Governance' },
+  { id: 'atlas', label: 'Atlas' },
+  { id: 'governance', label: 'Governance' },
 ] as const;
 
 export function WorkspaceTabs({

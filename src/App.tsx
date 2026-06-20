@@ -1,12 +1,27 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import RepositoryWorkbench from './components/RepositoryWorkbench';
 import TutorialModal from './components/TutorialModal';
 import {
   WorkspaceTabs,
   type WorkspaceView,
 } from './components/WorkspaceTabs';
-import { API_BASE_URL } from './config';
+import type {
+  ResearchEvidenceNavigation,
+} from './components/repository/types';
 import './App.css';
+
+const AtlasWorkspace = lazy(() =>
+  import('./components/AtlasWorkspace').then((module) => ({
+    default: module.AtlasWorkspace,
+  })),
+);
 
 const DataGovernanceRegistry = lazy(() =>
   import('./components/DataGovernanceRegistry').then((module) => ({
@@ -18,32 +33,20 @@ function App() {
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [activeTutorialTarget, setActiveTutorialTarget] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('research');
-  const [isGovernanceAvailable, setIsGovernanceAvailable] = useState(false);
+  const [hasMountedAtlas, setHasMountedAtlas] = useState(false);
   const [hasMountedGovernance, setHasMountedGovernance] = useState(false);
+  const [evidenceNavigation, setEvidenceNavigation] =
+    useState<ResearchEvidenceNavigation | null>(null);
+  const hasHandledTutorialAutoStart = useRef(false);
 
   useEffect(() => {
+    if (activeView !== 'research' || hasHandledTutorialAutoStart.current) return;
+    hasHandledTutorialAutoStart.current = true;
     const disabled = localStorage.getItem('tapa-workbench:tutorial-autostart-disabled') === 'true';
     if (disabled) return;
     const timer = window.setTimeout(() => setIsTutorialOpen(true), 500);
     return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    fetch(`${API_BASE_URL}/governance/status`, { signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : { available: false }))
-      .then((payload: { available?: boolean }) => {
-        setIsGovernanceAvailable(payload.available === true);
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setIsGovernanceAvailable(false);
-        }
-      });
-
-    return () => controller.abort();
-  }, []);
+  }, [activeView]);
 
   const completeTutorial = useCallback(() => {
     localStorage.setItem('tapa-workbench:tutorial-completed', 'true');
@@ -55,22 +58,32 @@ function App() {
     window.dispatchEvent(new CustomEvent('tapa-workbench:tutorial-action', { detail: { target } }));
   }, []);
 
-  const handleViewChange = useCallback(
-    (view: WorkspaceView) => {
-      if (view === 'governance') {
-        if (!isGovernanceAvailable) return;
-        setHasMountedGovernance(true);
-        setIsTutorialOpen(false);
-        setActiveTutorialTarget(null);
-      }
-      setActiveView(view);
+  const handleViewChange = useCallback((view: WorkspaceView) => {
+    if (view === 'atlas') setHasMountedAtlas(true);
+    if (view === 'governance') setHasMountedGovernance(true);
+    if (view !== 'research') {
+      setIsTutorialOpen(false);
+      setActiveTutorialTarget(null);
+    }
+    setActiveView(view);
+  }, []);
+
+  const openResearchEvidence = useCallback(
+    (target: Omit<ResearchEvidenceNavigation, 'request_id'>) => {
+      setEvidenceNavigation({
+        ...target,
+        request_id: Date.now(),
+      });
+      setActiveView('research');
+      setIsTutorialOpen(false);
+      setActiveTutorialTarget(null);
     },
-    [isGovernanceAvailable],
+    [],
   );
 
-  const headerNavigation = isGovernanceAvailable ? (
+  const headerNavigation = (
     <WorkspaceTabs activeView={activeView} onViewChange={handleViewChange} />
-  ) : null;
+  );
 
   return (
     <div className="standalone-workbench">
@@ -80,8 +93,26 @@ function App() {
           activeTutorialTarget={activeTutorialTarget}
           onTutorialAction={handleTutorialAction}
           headerNavigation={headerNavigation}
+          evidenceNavigation={evidenceNavigation}
         />
       </div>
+
+      {hasMountedAtlas && (
+        <div hidden={activeView !== 'atlas'}>
+          <Suspense
+            fallback={
+              <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-50 text-sm text-slate-500">
+                Loading Semantic Atlas…
+              </div>
+            }
+          >
+            <AtlasWorkspace
+              headerNavigation={headerNavigation}
+              onOpenResearchEvidence={openResearchEvidence}
+            />
+          </Suspense>
+        </div>
+      )}
 
       {hasMountedGovernance && (
         <div hidden={activeView !== 'governance'}>
