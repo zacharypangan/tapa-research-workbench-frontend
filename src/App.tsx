@@ -29,12 +29,19 @@ const DataGovernanceRegistry = lazy(() =>
   })),
 );
 
+const ProgressWorkspace = lazy(() =>
+  import('./components/ProgressWorkspace').then((module) => ({
+    default: module.ProgressWorkspace,
+  })),
+);
+
 function App() {
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [activeTutorialTarget, setActiveTutorialTarget] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('research');
   const [hasMountedAtlas, setHasMountedAtlas] = useState(false);
   const [hasMountedGovernance, setHasMountedGovernance] = useState(false);
+  const [hasMountedProgress, setHasMountedProgress] = useState(false);
   const [evidenceNavigation, setEvidenceNavigation] =
     useState<ResearchEvidenceNavigation | null>(null);
   const hasHandledTutorialAutoStart = useRef(false);
@@ -61,6 +68,7 @@ function App() {
   const handleViewChange = useCallback((view: WorkspaceView) => {
     if (view === 'atlas') setHasMountedAtlas(true);
     if (view === 'governance') setHasMountedGovernance(true);
+    if (view === 'progress') setHasMountedProgress(true);
     if (view !== 'research') {
       setIsTutorialOpen(false);
       setActiveTutorialTarget(null);
@@ -124,6 +132,20 @@ function App() {
             }
           >
             <DataGovernanceRegistry headerNavigation={headerNavigation} />
+          </Suspense>
+        </div>
+      )}
+
+      {hasMountedProgress && (
+        <div hidden={activeView !== 'progress'}>
+          <Suspense
+            fallback={
+              <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-50 text-sm text-slate-500">
+                Loading Progress Portal...
+              </div>
+            }
+          >
+            <ProgressWorkspace headerNavigation={headerNavigation} />
           </Suspense>
         </div>
       )}
