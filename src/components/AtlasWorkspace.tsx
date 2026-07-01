@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { API_BASE_URL } from '../config';
+import { useWorkbenchAuth } from '../auth-context';
 import { SemanticAtlasCanvas } from './repository/graph/SemanticAtlasCanvas';
 import { SemanticGraphDetailPanel } from './repository/graph/SemanticGraphDetailPanel';
 import {
@@ -98,6 +99,7 @@ export function AtlasWorkspace({
   headerNavigation,
   onOpenResearchEvidence,
 }: AtlasWorkspaceProps) {
+  const { apiFetch } = useWorkbenchAuth();
   const [availability, setAvailability] = useState<Availability>('checking');
   const [semanticPayload, setSemanticPayload] =
     useState<SemanticGraphPayload | null>(null);
@@ -145,13 +147,13 @@ export function AtlasWorkspace({
       ];
       let lastResponse: Response | null = null;
       for (const url of urls) {
-        const response = await fetch(url, init);
+        const response = await apiFetch(url, init);
         if (response.status !== 404) return response;
         lastResponse = response;
       }
-      return lastResponse ?? fetch(urls[0], init);
+      return lastResponse ?? apiFetch(urls[0], init);
     },
-    [],
+    [apiFetch],
   );
 
   const clearFocus = useCallback(() => {

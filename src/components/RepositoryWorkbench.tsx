@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { API_BASE_URL } from '../config';
+import { useWorkbenchAuth } from '../auth-context';
+import { ProtectedDownload, ProtectedImage } from './repository/ProtectedAsset';
 import {
   EMPTY_FORM,
   EMPTY_OBSERVATION_FORM,
@@ -64,6 +66,7 @@ export default function RepositoryWorkbench({
   headerNavigation,
   evidenceNavigation,
 }: RepositoryWorkbenchProps) {
+  const { apiFetch } = useWorkbenchAuth();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -139,13 +142,13 @@ export default function RepositoryWorkbench({
       }
       let lastResponse: Response | null = null;
       for (const url of urls) {
-        const response = await fetch(url, init);
+        const response = await apiFetch(url, init);
         if (response.status !== 404) return response;
         lastResponse = response;
       }
-      return lastResponse ?? fetch(urls[0], init);
+      return lastResponse ?? apiFetch(urls[0], init);
     },
-    [buildRepositoryUrls],
+    [apiFetch, buildRepositoryUrls],
   );
 
   const loadAiStatus = useCallback(async () => {
@@ -1628,7 +1631,7 @@ export default function RepositoryWorkbench({
                           onClick={() => openAnnotationWorkspace(image.material_id, 'images', null, image.image_id)}
                           className="grid w-full gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 text-left hover:bg-blue-50 sm:grid-cols-[120px_1fr]"
                         >
-                          <img
+                          <ProtectedImage
                             src={imageEvidenceUrl(image)}
                             alt={image.visual_caption || image.page_ref}
                             className="h-24 w-full rounded-md border border-slate-200 object-cover"
@@ -1835,7 +1838,7 @@ export default function RepositoryWorkbench({
                               image.research_relevance === 'low' ? 'text-slate-400 opacity-75' : 'text-slate-600'
                             }`}
                           >
-                            <img
+                            <ProtectedImage
                               src={imageEvidenceUrl(image)}
                               alt={image.visual_caption || image.page_ref}
                               className="h-20 w-full rounded-md border border-slate-200 object-cover"
@@ -2187,14 +2190,15 @@ export default function RepositoryWorkbench({
                   </div>
                   <div className="divide-y divide-slate-100">
                     {(selectedMaterial.files || []).map((file) => (
-                      <a
+                      <ProtectedDownload
                         key={file.id}
-                        href={fileDownloadUrl(selectedMaterial.id, file.id)}
+                        url={fileDownloadUrl(selectedMaterial.id, file.id)}
+                        filename={file.original_filename}
                         className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50"
                       >
                         <span className="min-w-0 truncate text-sm font-bold text-slate-700">{file.original_filename}</span>
                         <span className="shrink-0 text-xs text-slate-400">{formatBytes(file.file_size)}</span>
-                      </a>
+                      </ProtectedDownload>
                     ))}
                     {(selectedMaterial.files || []).length === 0 && (
                       <div className="px-4 py-6 text-sm text-slate-400">No files attached.</div>
@@ -2437,7 +2441,7 @@ export default function RepositoryWorkbench({
                             : 'border-slate-100 bg-white'
                         }`}
                       >
-                        <img
+                        <ProtectedImage
                           src={imageEvidenceUrl(image)}
                           alt={image.visual_caption || image.page_ref}
                           className="max-h-64 w-full rounded-lg border border-slate-200 object-contain bg-white"

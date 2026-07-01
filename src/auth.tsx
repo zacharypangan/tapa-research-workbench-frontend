@@ -5,27 +5,9 @@ import {
   useAuth,
   useUser,
 } from '@clerk/react';
-import { createContext, useCallback, useContext } from 'react';
+import { useCallback } from 'react';
 import App from './App';
-
-interface WorkbenchAuth {
-  userId: string | null;
-  displayName: string;
-  apiFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-}
-
-const anonymousFetch = (input: RequestInfo | URL, init?: RequestInit) =>
-  fetch(input, init);
-
-const WorkbenchAuthContext = createContext<WorkbenchAuth>({
-  userId: null,
-  displayName: 'Local development',
-  apiFetch: anonymousFetch,
-});
-
-export function useWorkbenchAuth() {
-  return useContext(WorkbenchAuthContext);
-}
+import { anonymousFetch, WorkbenchAuthContext } from './auth-context';
 
 function ClerkAuthenticatedApp() {
   const { isLoaded, isSignedIn, getToken, userId } = useAuth();
@@ -54,7 +36,7 @@ function ClerkAuthenticatedApp() {
 
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Project member';
   return (
-    <WorkbenchAuthContext.Provider value={{ userId: userId ?? null, displayName, apiFetch }}>
+    <WorkbenchAuthContext.Provider value={{ userId: userId ?? null, displayName, getToken, apiFetch }}>
       <div className="fixed right-5 top-4 z-[100] flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-2 py-1 shadow-sm backdrop-blur">
         <span className="hidden max-w-48 truncate pl-2 text-xs font-semibold text-slate-600 sm:block">
           {displayName}
@@ -71,7 +53,7 @@ export function WorkbenchRoot() {
   if (!publishableKey) {
     return (
       <WorkbenchAuthContext.Provider
-        value={{ userId: 'local-admin', displayName: 'Local development', apiFetch: anonymousFetch }}
+        value={{ userId: 'local-admin', displayName: 'Local development', getToken: async () => null, apiFetch: anonymousFetch }}
       >
         <App />
       </WorkbenchAuthContext.Provider>

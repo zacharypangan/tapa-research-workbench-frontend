@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { API_BASE_URL } from '../config';
+import { useWorkbenchAuth } from '../auth-context';
 
 interface GovernanceDataset {
   dataset_id: string;
@@ -84,6 +85,7 @@ async function responseError(response: Response) {
 export function DataGovernanceRegistry({
   headerNavigation,
 }: DataGovernanceRegistryProps) {
+  const { apiFetch } = useWorkbenchAuth();
   const [registry, setRegistry] =
     useState<GovernanceRegistryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -99,7 +101,7 @@ export function DataGovernanceRegistry({
     setIsLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/governance/registry`, {
+      const response = await apiFetch(`${API_BASE_URL}/governance/registry`, {
         signal,
       });
       if (!response.ok) {
@@ -119,7 +121,7 @@ export function DataGovernanceRegistry({
     } finally {
       if (!signal?.aborted) setIsLoading(false);
     }
-  }, []);
+  }, [apiFetch]);
 
   useEffect(() => {
     const controller = new AbortController();
