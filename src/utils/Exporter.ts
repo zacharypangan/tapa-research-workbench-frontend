@@ -1,4 +1,4 @@
-export const downloadCSV = (data: any[], filename: string) => {
+export const downloadCSV = <T extends object>(data: T[], filename: string) => {
   if (!data || data.length === 0) {
     console.warn("Exporter: No data provided for CSV download");
     return;
@@ -14,7 +14,7 @@ export const downloadCSV = (data: any[], filename: string) => {
     // Add data rows
     for (const row of data) {
       const values = fields.map(field => {
-        const val = row[field];
+        const val = row[field as keyof T];
         const escaped = ('' + (val ?? '')).replace(/"/g, '""');
         return `"${escaped}"`;
       });
@@ -37,7 +37,7 @@ export const downloadCSV = (data: any[], filename: string) => {
   }
 };
 
-export const downloadJSON = (data: any[], filename: string) => {
+export const downloadJSON = (data: unknown[], filename: string) => {
   if (!data || data.length === 0) {
     console.warn("Exporter: No data provided for JSON download");
     return;

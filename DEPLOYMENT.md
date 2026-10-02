@@ -11,10 +11,11 @@ Build command: npm run build
 Output directory: dist
 ```
 
-Set this environment variable in Vercel:
+Set these environment variables in Vercel:
 
 ```env
-VITE_API_BASE_URL=https://tapa-research-workbench-backend-production.up.railway.app/api/v1
+VITE_API_BASE_URL=https://<railway-backend-domain>/api/v1
+VITE_CLERK_PUBLISHABLE_KEY=<production Clerk publishable key>
 ```
 
 Use Vercel deployment protection or team-only access for the first shared-team deployment.
@@ -29,3 +30,5 @@ REPOSITORY_STORAGE_ROOT=/app/storage/repository
 ```
 
 See `../stling_backend/DEPLOYMENT.md` for the backend checklist and smoke check command.
+
+Production builds require both variables. The UI prompts signed-in users to select a Clerk Organization; the backend must configure the matching `CLERK_ORGANIZATION_ID`. Configure these variables separately for each Vercel environment.

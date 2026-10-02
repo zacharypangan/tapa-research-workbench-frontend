@@ -50,6 +50,8 @@ import type {
   SemanticSearchResponse,
 } from './repository/types';
 
+const MATERIAL_PAGE_SIZE = 100;
+
 const WORKFLOW_STATUS_ORDER = [
   'needs_metadata',
   'ready_for_text_extraction',
@@ -68,6 +70,10 @@ export default function RepositoryWorkbench({
 }: RepositoryWorkbenchProps) {
   const { apiFetch } = useWorkbenchAuth();
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [materialPage, setMaterialPage] = useState(0);
+  const [materialTotal, setMaterialTotal] = useState(0);
+  const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
+  const materialsRequest = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
   const [sourceTypes, setSourceTypes] = useState<string[]>(Object.keys(SOURCE_TYPE_LABELS));
@@ -129,26 +135,9 @@ export default function RepositoryWorkbench({
     }
   }, [initialFocus, focusSignal]);
 
-  const buildRepositoryUrls = useCallback((path: string) => {
-    if (!API_BASE_URL) return [];
-    return [`${API_BASE_URL}/repository${path}`, `${API_BASE_URL}${path}`];
-  }, []);
-
   const repositoryFetch = useCallback(
-    async (path: string, init?: RequestInit) => {
-      const urls = buildRepositoryUrls(path);
-      if (urls.length === 0) {
-        throw new Error('Backend API is not configured for this deployment.');
-      }
-      let lastResponse: Response | null = null;
-      for (const url of urls) {
-        const response = await apiFetch(url, init);
-        if (response.status !== 404) return response;
-        lastResponse = response;
-      }
-      return lastResponse ?? apiFetch(urls[0], init);
-    },
-    [apiFetch, buildRepositoryUrls],
+    (path: string, init?: RequestInit) => apiFetch(`${API_BASE_URL}/repository${path}`, init),
+    [apiFetch],
   );
 
   const loadAiStatus = useCallback(async () => {
@@ -157,17 +146,6 @@ export default function RepositoryWorkbench({
     const data = await response.json();
     setAiStatus(data);
   }, [repositoryFetch]);
-
-  const selectedStatusCount = useMemo(() => {
-    return materials.filter((material) => material.status === statusFilter).length;
-  }, [materials, statusFilter]);
-
-  const queueCounts = useMemo(() => {
-    return statuses.reduce<Record<string, number>>((acc, status) => {
-      acc[status] = materials.filter((material) => material.status === status).length;
-      return acc;
-    }, {});
-  }, [materials, statuses]);
 
   const queueStatuses = useMemo(() => {
     const ordered = WORKFLOW_STATUS_ORDER.filter((status) => statuses.includes(status));
@@ -220,26 +198,29 @@ export default function RepositoryWorkbench({
     setShowProcessReferencesPanel(false);
   };
 
-  const loadMaterials = useCallback(async () => {
-    const params = new URLSearchParams();
+  const loadMaterials = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++materialsRequest.current;
+    const params = new URLSearchParams({
+      limit: String(MATERIAL_PAGE_SIZE),
+      offset: String(materialPage * MATERIAL_PAGE_SIZE),
+    });
     if (search.trim()) params.set('q', search.trim());
     if (statusFilter) params.set('status', statusFilter);
-    const response = await repositoryFetch(`/materials?${params}`);
+    const response = await repositoryFetch(`/materials?${params}`, { signal });
     if (!response.ok) {
-      const message = await parseErrorResponse(response, 'Failed to load repository materials');
-      throw new Error(message);
+      throw new Error(await parseErrorResponse(response, 'Failed to load repository materials'));
     }
     const data = await response.json();
-    const nextMaterials = data.materials || [];
+    if (signal?.aborted || requestId !== materialsRequest.current) return;
+    const nextMaterials: Material[] = data.materials || [];
     setMaterials(nextMaterials);
-    if (nextMaterials.length === 0) {
-      setSelectedId(null);
-      return;
+    setMaterialTotal(data.total || 0);
+    setQueueCounts(data.status_counts || {});
+    if (nextMaterials.length === 0 && materialPage > 0 && data.total > 0) {
+      setMaterialPage(Math.max(0, Math.ceil(data.total / MATERIAL_PAGE_SIZE) - 1));
     }
-    if (!selectedId || !nextMaterials.some((material: Material) => material.id === selectedId)) {
-      setSelectedId(nextMaterials[0].id);
-    }
-  }, [repositoryFetch, search, selectedId, statusFilter]);
+    setSelectedId((current) => nextMaterials.some((material) => material.id === current) ? current : nextMaterials[0]?.id || null);
+  }, [repositoryFetch, search, statusFilter, materialPage]);
 
   const loadSelectedMaterial = useCallback(async (id: string | null) => {
     if (!id) {
@@ -302,9 +283,16 @@ export default function RepositoryWorkbench({
   }, [loadAiStatus, repositoryFetch]);
 
   useEffect(() => {
-    loadMaterials().catch((err) => {
-      setError(getErrorMessage(err, 'Failed to load repository'));
-    });
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      loadMaterials(controller.signal).catch((err) => {
+        if (!controller.signal.aborted) setError(getErrorMessage(err, 'Failed to load repository materials'));
+      });
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [loadMaterials]);
 
   useEffect(() => {
@@ -617,27 +605,25 @@ export default function RepositoryWorkbench({
           throw new Error(message || 'Text extraction failed.');
         }
 
-        const extractionResult = await response.json();
+        const submitted = await response.json();
+        if (!submitted.job_id) throw new Error('Extraction did not return a job. Please refresh the workspace.');
+        let completed = false;
+        for (let attempt = 0; attempt < 1800; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          const jobResponse = await apiFetch(`${API_BASE_URL}/progress/jobs/${submitted.job_id}`);
+          if (!jobResponse.ok) throw new Error('Could not check extraction progress. Refresh the workspace to check the result.');
+          const job = await jobResponse.json();
+          if (job.status === 'queued' || job.status === 'running') continue;
+          if (job.status !== 'completed') throw new Error(job.error_message || 'Extraction failed. Please retry.');
+          if (job.result?.warnings?.length) setError(job.result.warnings.join(' '));
+          completed = true;
+          break;
+        }
+        if (!completed) throw new Error('Extraction is still running. You can refresh the workspace to check the result.');
         await loadMaterials();
         await loadExtractedPreview(materialId);
-
         const detailResponse = await repositoryFetch(`/materials/${materialId}`);
-        if (detailResponse.ok) {
-          const refreshedMaterial = await detailResponse.json();
-          setSelectedMaterial(refreshedMaterial);
-        }
-
-        if (extractionResult.image_label_job_id) {
-          for (let attempt = 0; attempt < 120; attempt += 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 2000));
-            const jobResponse = await repositoryFetch(`/ai/image-index/jobs/${extractionResult.image_label_job_id}`);
-            if (!jobResponse.ok) continue;
-            const job = await jobResponse.json();
-            if (job.status === 'queued' || job.status === 'running') continue;
-            await loadExtractedPreview(materialId);
-            break;
-          }
-        }
+        if (detailResponse.ok) setSelectedMaterial(await detailResponse.json());
 
         await loadAiStatus();
       } catch (err) {
@@ -647,6 +633,7 @@ export default function RepositoryWorkbench({
       }
     },
     [
+      apiFetch,
       loadAiStatus,
       loadExtractedPreview,
       loadMaterials,
@@ -897,14 +884,37 @@ export default function RepositoryWorkbench({
     }, 80);
   }, [extractedPreview, extractedModalTab, isExtractedModalOpen, targetImageId]);
 
-  const printHiddenReport = (
+  const printHiddenReport = async (
     title: string,
     summaryHtml: string,
     bodyHtml: string,
     footerText: string,
     documentTitle = title,
   ) => {
-    const html = buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText, documentTitle);
+    const report = new DOMParser().parseFromString(
+      buildPrintableReportHtml(title, summaryHtml, bodyHtml, footerText, documentTitle),
+      'text/html',
+    );
+    const objectUrls: string[] = [];
+    try {
+      const api = new URL(API_BASE_URL, window.location.href);
+      for (const image of Array.from(report.images)) {
+        const source = new URL(image.getAttribute('src') || '', window.location.href);
+        if (source.origin !== api.origin || !source.pathname.startsWith(`${api.pathname}/repository/`)) {
+          throw new Error('The report contains an unsupported image source.');
+        }
+        const response = await apiFetch(source.href);
+        if (!response.ok) throw new Error('Could not load a report image. Please try again.');
+        const url = URL.createObjectURL(await response.blob());
+        objectUrls.push(url);
+        image.src = url;
+      }
+    } catch (err) {
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+      setError(getErrorMessage(err, 'Could not prepare the PDF report.'));
+      return;
+    }
+    const html = `<!doctype html>${report.documentElement.outerHTML}`;
     const iframe = document.createElement('iframe');
     iframe.style.position = 'fixed';
     iframe.style.right = '0';
@@ -920,14 +930,21 @@ export default function RepositoryWorkbench({
 
     if (!iframeDocument) {
       iframe.remove();
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
       setError('Could not prepare the PDF report. Please try again.');
       return;
     }
 
+    const cleanup = () => {
+      window.clearTimeout(cleanupTimeout);
+      iframe.remove();
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+    const cleanupTimeout = window.setTimeout(cleanup, 120000);
     iframeDocument.open();
     iframeDocument.write(html);
+    iframe.contentWindow?.addEventListener('afterprint', cleanup, { once: true });
     iframeDocument.close();
-    window.setTimeout(() => iframe.remove(), 30000);
   };
 
   const escapeCsvCell = (value: unknown) => {
@@ -1361,7 +1378,7 @@ export default function RepositoryWorkbench({
             <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Search</label>
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => { setSearch(event.target.value); setMaterialPage(0); }}
               placeholder="Title, author, filename, observation"
               className="w-full h-10 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500"
             />
@@ -1370,7 +1387,7 @@ export default function RepositoryWorkbench({
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Queue</span>
               {statusFilter && (
                 <button
-                  onClick={() => setStatusFilter('')}
+                  onClick={() => { setStatusFilter(''); setMaterialPage(0); }}
                   className="text-[10px] font-black uppercase text-blue-600"
                 >
                   Clear
@@ -1381,7 +1398,7 @@ export default function RepositoryWorkbench({
               {queueStatuses.map((status) => (
                 <button
                   key={status}
-                  onClick={() => setStatusFilter(status)}
+                  onClick={() => { setStatusFilter(status); setMaterialPage(0); }}
                   className={`w-full min-h-10 rounded-lg px-3 text-left flex items-center justify-between text-xs font-bold transition-colors ${
                     statusFilter === status ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'
                   }`}
@@ -1407,8 +1424,13 @@ export default function RepositoryWorkbench({
               <div>
                 <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Materials</h3>
                 <p className="text-xs text-slate-400">
-                  {statusFilter ? `${selectedStatusCount} in ${STATUS_LABELS[statusFilter]}` : `${materials.length} records shown`}
+                  {materials.length} of {materialTotal} records{statusFilter ? ` in ${STATUS_LABELS[statusFilter]}` : ''}
                 </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <button type="button" disabled={materialPage === 0} onClick={() => setMaterialPage((page) => page - 1)} className="rounded border border-slate-200 px-2 py-1 disabled:opacity-40">Previous</button>
+                <span>Page {materialPage + 1} of {Math.max(1, Math.ceil(materialTotal / MATERIAL_PAGE_SIZE))}</span>
+                <button type="button" disabled={(materialPage + 1) * MATERIAL_PAGE_SIZE >= materialTotal} onClick={() => setMaterialPage((page) => page + 1)} className="rounded border border-slate-200 px-2 py-1 disabled:opacity-40">Next</button>
               </div>
             </div>
             <div

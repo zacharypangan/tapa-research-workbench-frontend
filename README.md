@@ -51,7 +51,7 @@ Build Command: npm run build
 Output Directory: dist
 ```
 
-Set `VITE_API_BASE_URL` in Vercel Project Settings if the backend URL changes.
+Set `VITE_API_BASE_URL` and `VITE_CLERK_PUBLISHABLE_KEY` for each Vercel environment. Production builds reject missing configuration. See `DEPLOYMENT.md` for Clerk organization setup.
 
 For the first shared-team deployment, enable Vercel deployment protection or team-only access. See `DEPLOYMENT.md` for the full Vercel + Railway checklist.
 

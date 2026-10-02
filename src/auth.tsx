@@ -1,5 +1,7 @@
 import {
   ClerkProvider,
+  OrganizationList,
+  OrganizationSwitcher,
   SignIn,
   UserButton,
   useAuth,
@@ -7,10 +9,11 @@ import {
 } from '@clerk/react';
 import { useCallback } from 'react';
 import App from './App';
+import { API_BASE_URL } from './config';
 import { anonymousFetch, WorkbenchAuthContext } from './auth-context';
 
 function ClerkAuthenticatedApp() {
-  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
+  const { isLoaded, isSignedIn, getToken, userId, orgId } = useAuth();
   const { user } = useUser();
   const apiFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -34,6 +37,14 @@ function ClerkAuthenticatedApp() {
     );
   }
 
+  if (!orgId) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-slate-100 p-6">
+        <OrganizationList hidePersonal afterSelectOrganizationUrl="/" afterCreateOrganizationUrl="/" />
+      </main>
+    );
+  }
+
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Project member';
   return (
     <WorkbenchAuthContext.Provider value={{ userId: userId ?? null, displayName, getToken, apiFetch }}>
@@ -41,6 +52,7 @@ function ClerkAuthenticatedApp() {
         <span className="hidden max-w-48 truncate pl-2 text-xs font-semibold text-slate-600 sm:block">
           {displayName}
         </span>
+        <OrganizationSwitcher hidePersonal />
         <UserButton />
       </div>
       <App />
@@ -50,6 +62,9 @@ function ClerkAuthenticatedApp() {
 
 export function WorkbenchRoot() {
   const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+  if (import.meta.env.PROD && (!publishableKey || !API_BASE_URL)) {
+    return <main className="grid min-h-screen place-items-center p-6 text-sm text-slate-600">Workspace setup is incomplete. Please contact the workspace administrator.</main>;
+  }
   if (!publishableKey) {
     return (
       <WorkbenchAuthContext.Provider

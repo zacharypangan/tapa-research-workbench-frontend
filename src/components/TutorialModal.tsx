@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type TutorialStep = {
   title: string;
@@ -28,6 +28,26 @@ interface TutorialModalProps {
   onClose: () => void;
   onComplete: () => void;
   onTargetChange: (target: string | null) => void;
+}
+
+function triggerTutorialTarget(target: string, requireAction = false) {
+  const actionable = document.querySelector<HTMLElement>(
+    `button:not(:disabled)[data-tutorial-next-target="${target}"], ` +
+    `button:not(:disabled)[data-tutorial-target="${target}"], ` +
+    `input:not(:disabled)[data-tutorial-target="${target}"], ` +
+    `label[data-tutorial-target="${target}"]`,
+  );
+  if (requireAction && !actionable) return false;
+  const element = actionable ?? document.querySelector<HTMLElement>(`[data-tutorial-target="${target}"]`);
+  if (!element) return false;
+  element.click();
+  return true;
+}
+
+function clickTutorialTarget(target: string) {
+  return () => {
+    triggerTutorialTarget(target);
+  };
 }
 
 export default function TutorialModal({
@@ -110,6 +130,11 @@ export default function TutorialModal({
     [],
   );
 
+  const close = useCallback(() => {
+    onTargetChange(null);
+    onClose();
+  }, [onTargetChange, onClose]);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -119,7 +144,7 @@ export default function TutorialModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, steps.length]);
+  }, [isOpen, steps.length, close]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -155,37 +180,12 @@ export default function TutorialModal({
     localStorage.setItem('tapa-workbench:tutorial-autostart-disabled', disableAutoStart ? 'true' : 'false');
   }, [disableAutoStart]);
 
-  const close = () => {
-    onTargetChange(null);
-    onClose();
-  };
-
   const finish = () => {
     localStorage.setItem('tapa-workbench:tutorial-completed', 'true');
     localStorage.setItem('tapa-workbench:tutorial-version', '2');
     onTargetChange(null);
     onComplete();
   };
-
-  function triggerTutorialTarget(target: string, requireAction = false) {
-    const actionable = document.querySelector<HTMLElement>(
-      `button:not(:disabled)[data-tutorial-next-target="${target}"], ` +
-      `button:not(:disabled)[data-tutorial-target="${target}"], ` +
-      `input:not(:disabled)[data-tutorial-target="${target}"], ` +
-      `label[data-tutorial-target="${target}"]`,
-    );
-    if (requireAction && !actionable) return false;
-    const element = actionable ?? document.querySelector<HTMLElement>(`[data-tutorial-target="${target}"]`);
-    if (!element) return false;
-    element.click();
-    return true;
-  }
-
-  function clickTutorialTarget(target: string) {
-    return () => {
-      triggerTutorialTarget(target);
-    };
-  }
 
   const goNext = () => {
     if (isLastStep) {

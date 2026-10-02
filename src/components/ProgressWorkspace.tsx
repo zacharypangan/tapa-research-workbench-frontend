@@ -1,10 +1,19 @@
-import { startTransition, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { useWorkbenchAuth } from '../auth-context';
 import { API_BASE_URL } from '../config';
 import { MeetingWorkspace } from './progress/MeetingWorkspace';
+import { ProjectProgressPage } from './progress/ProjectProgressPage';
 import type {
   MeetingDetailPayload,
   ProgressApi,
+  ProjectProgressDashboard,
   ProgressMeeting,
   ProgressSearchResult,
   ProgressStatus,
@@ -20,11 +29,20 @@ const searchBasis = {
   concept_alias: 'Concept expansion',
 };
 
+const responseError = async (response: Response, fallback: string) => {
+  const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  if (typeof payload?.detail === 'string') return payload.detail;
+  if (payload?.detail) return JSON.stringify(payload.detail);
+  return fallback;
+};
+
 export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) {
   const { apiFetch, displayName } = useWorkbenchAuth();
   const [status, setStatus] = useState<ProgressStatus | null>(null);
   const [meetings, setMeetings] = useState<ProgressMeeting[]>([]);
+  const [dashboard, setDashboard] = useState<ProjectProgressDashboard | null>(null);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [activeSurface, setActiveSurface] = useState<'dashboard' | 'meeting'>('dashboard');
   const [detail, setDetail] = useState<MeetingDetailPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -33,49 +51,73 @@ export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) 
   const [isSearching, setIsSearching] = useState(false);
   const [showMeetingForm, setShowMeetingForm] = useState(false);
 
-  const api: ProgressApi = useCallback(async <T,>(path: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers);
-    if (init?.body) headers.set('Content-Type', 'application/json');
-    const response = await apiFetch(`${API_BASE_URL}/progress${path}`, { ...init, headers });
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
-      const detailMessage = typeof payload?.detail === 'string'
-        ? payload.detail
-        : payload?.detail
-          ? JSON.stringify(payload.detail)
-          : `Progress API returned ${response.status}`;
-      throw new Error(detailMessage);
-    }
-    return response.json() as Promise<T>;
-  }, [apiFetch]);
+  const api: ProgressApi = useCallback(
+    async <T,>(path: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (init?.body) headers.set('Content-Type', 'application/json');
+      const response = await apiFetch(`${API_BASE_URL}/progress${path}`, {
+        ...init,
+        headers,
+      });
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, `Progress API returned ${response.status}`),
+        );
+      }
+      return response.json() as Promise<T>;
+    },
+    [apiFetch],
+  );
 
-  const loadMeetings = async () => {
+  const loadMeetings = useCallback(async () => {
     const payload = await api<ProgressMeeting[]>('/meetings');
     setMeetings(payload);
     setSelectedMeetingId((current) => current || payload[0]?.id || null);
-  };
+    return payload;
+  }, [api]);
 
-  const loadDetail = async (meetingId = selectedMeetingId) => {
-    if (!meetingId) return;
-    const payload = await api<MeetingDetailPayload>(`/meetings/${meetingId}`);
-    setDetail(payload);
-  };
+  const loadDashboard = useCallback(async () => {
+    const payload = await api<ProjectProgressDashboard>('/dashboard');
+    setDashboard(payload);
+    return payload;
+  }, [api]);
+
+  const loadDetail = useCallback(
+    async (meetingId = selectedMeetingId) => {
+      if (!meetingId) return null;
+      const payload = await api<MeetingDetailPayload>(`/meetings/${meetingId}`);
+      setDetail(payload);
+      return payload;
+    },
+    [api, selectedMeetingId],
+  );
 
   useEffect(() => {
     let active = true;
-    Promise.all([api<ProgressStatus>('/status'), api<ProgressMeeting[]>('/meetings')])
+    Promise.all([api<ProgressStatus>('/status'), loadMeetings(), loadDashboard()])
       .then(([statusPayload, meetingPayload]) => {
         if (!active) return;
         setStatus(statusPayload);
-        setMeetings(meetingPayload);
-        setSelectedMeetingId(meetingPayload[0]?.id || null);
+        setSelectedMeetingId((current) => current || meetingPayload[0]?.id || null);
       })
-      .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Progress API is unavailable.'); })
-      .finally(() => { if (active) setIsLoading(false); });
-    return () => { active = false; };
-  }, [api]);
+      .catch((loadError) => {
+        if (!active) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Progress API is unavailable.',
+        );
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, loadDashboard, loadMeetings]);
 
   useEffect(() => {
+    if (activeSurface !== 'meeting') return;
     if (!selectedMeetingId) {
       setDetail(null);
       return;
@@ -83,11 +125,24 @@ export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) 
     let active = true;
     setIsLoading(true);
     api<MeetingDetailPayload>(`/meetings/${selectedMeetingId}`)
-      .then((payload) => { if (active) setDetail(payload); })
-      .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Could not load meeting.'); })
-      .finally(() => { if (active) setIsLoading(false); });
-    return () => { active = false; };
-  }, [api, selectedMeetingId]);
+      .then((payload) => {
+        if (active) setDetail(payload);
+      })
+      .catch((loadError) => {
+        if (!active) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Could not load the selected meeting.',
+        );
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeSurface, api, selectedMeetingId]);
 
   const submitSearch = async (event: FormEvent) => {
     event.preventDefault();
@@ -102,93 +157,438 @@ export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) 
       const payload = await api<ProgressSearchResult[]>(`/search?${params}`);
       setSearchResults(payload);
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : 'Search failed.');
+      setError(
+        searchError instanceof Error ? searchError.message : 'Search failed.',
+      );
     } finally {
       setIsSearching(false);
     }
   };
 
+  const canWrite = status?.permissions.includes('progress:write') ?? false;
+
   return (
-    <div className="min-h-screen bg-[#edf2ee] text-slate-900">
-      <header className="border-b border-emerald-950/10 bg-[#f8faf7]/95 px-5 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 pr-14">
-          <div>
-            <p className="text-[9px] font-black uppercase tracking-[0.26em] text-teal-700">Research memory</p>
-            <h1 className="font-serif text-xl font-bold tracking-tight">Progress & Provenance</h1>
+    <div className="fixed inset-0 z-[80] bg-slate-950/60 backdrop-blur-sm">
+      <div className="flex h-full w-full flex-col bg-slate-50 text-slate-900">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5">
+          <div className="flex min-w-0 items-center gap-4 overflow-x-auto">
+            <h2 className="hidden shrink-0 text-sm font-black uppercase tracking-[0.18em] lg:block">
+              Progress Portal
+            </h2>
+            {headerNavigation}
           </div>
-          <form onSubmit={submitSearch} className="order-3 flex w-full max-w-2xl overflow-hidden rounded-full border border-slate-300 bg-white shadow-sm lg:order-none">
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search original text, translations, and concepts..." className="min-w-0 flex-1 px-5 py-2.5 text-sm outline-none" />
-            <button className="bg-teal-800 px-5 text-xs font-black uppercase tracking-wider text-white">{isSearching ? 'Searching' : 'Search'}</button>
-          </form>
-          {headerNavigation}
-        </div>
-      </header>
-
-      {error && <div className="border-b border-rose-200 bg-rose-50 px-6 py-3 text-sm text-rose-800">{error}</div>}
-
-      {searchResults.length > 0 ? (
-        <main className="mx-auto max-w-6xl px-6 py-8">
-          <div className="mb-6 flex items-end justify-between">
-            <div><p className="text-xs font-black uppercase tracking-[0.2em] text-teal-700">Bilingual retrieval</p><h2 className="font-serif text-4xl font-semibold">Results for “{search}”</h2></div>
-            <button onClick={() => setSearchResults([])} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-bold">Return to meetings</button>
-          </div>
-          <div className="space-y-4">
-            {searchResults.map((result) => (
-              <button key={`${result.source_kind}:${result.source_id}`} onClick={() => { setSearchResults([]); if (result.meeting_id) startTransition(() => setSelectedMeetingId(result.meeting_id!)); }} className="block w-full rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-sm hover:border-teal-400">
-                <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
-                  <span className="text-teal-700">{result.source_kind.replaceAll('_', ' ')}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">{searchBasis[result.retrieval_basis]}</span>
-                  <span className="text-slate-400">Matched: {result.matched_term}</span>
-                </div>
-                {result.title && <h3 className="mt-3 font-serif text-xl font-semibold">{result.title}</h3>}
-                {result.original_text && <p className="mt-3 text-sm leading-7 text-slate-800">{result.original_text}</p>}
-                {(result.translation_en || result.translation_ja) && <p className="mt-2 border-l-2 border-amber-400 pl-3 text-sm leading-6 text-slate-500">{result.translation_en || result.translation_ja}</p>}
+          <div className="flex items-center gap-3">
+            <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 lg:inline-flex">
+              {status?.role || 'Checking'}
+            </span>
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => setShowMeetingForm(true)}
+                className="h-10 shrink-0 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+              >
+                New Meeting
               </button>
-            ))}
+            )}
           </div>
-        </main>
-      ) : (
-        <div className="mx-auto grid max-w-[1600px] grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="border-r border-slate-200 bg-[#173f35] text-white lg:min-h-[calc(100vh-65px)]">
-            <div className="border-b border-white/10 p-5">
-              <p className="text-xs text-emerald-100">{displayName}</p>
-              <div className="mt-2 flex items-center gap-2"><span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase">{status?.role || 'checking'}</span><span className="text-[10px] text-emerald-200">{meetings.length} meetings</span></div>
-              <button onClick={() => setShowMeetingForm(true)} className="mt-4 w-full rounded-xl bg-[#e6b95c] px-4 py-2.5 text-xs font-black uppercase tracking-wider text-emerald-950">Add meeting</button>
+        </header>
+
+        {error && (
+          <div className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-800">
+            {error}
+          </div>
+        )}
+
+        <div className="grid min-h-0 flex-1 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="border-b border-slate-200 bg-white p-4 xl:min-h-0 xl:overflow-auto xl:border-b-0 xl:border-r">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+                Signed in
+              </p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                {displayName}
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
+                <div>
+                  <p className="font-black uppercase tracking-wider text-slate-400">
+                    Meetings
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">
+                    {meetings.length}
+                  </p>
+                </div>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-slate-400">
+                    Records
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">
+                    {dashboard?.summary.record_count ?? 0}
+                  </p>
+                </div>
+              </div>
             </div>
-            <nav className="p-3" aria-label="Meetings">
-              {meetings.map((meeting) => (
-                <button key={meeting.id} onClick={() => startTransition(() => setSelectedMeetingId(meeting.id))} className={`mb-1 block w-full rounded-xl px-4 py-3 text-left ${meeting.id === selectedMeetingId ? 'bg-white text-emerald-950 shadow-lg' : 'text-emerald-50 hover:bg-white/10'}`}>
-                  <span className="block text-[10px] font-black uppercase tracking-[0.16em] opacity-65">{meeting.meeting_date}</span>
-                  <span className="mt-1 block font-serif text-base font-semibold leading-tight">{meeting.title_original}</span>
+
+            <form onSubmit={submitSearch} className="mt-4 space-y-3">
+              <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
+                Portal Search
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Original text, translations, concepts"
+                  className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                >
+                  {isSearching ? 'Searching' : 'Search'}
                 </button>
-              ))}
-            </nav>
+                {searchResults.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchResults([])}
+                    className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </form>
+
+            <div className="mt-6">
+              <h3 className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+                Views
+              </h3>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchResults([]);
+                    startTransition(() => setActiveSurface('dashboard'));
+                  }}
+                  className={`block w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                    activeSurface === 'dashboard' && searchResults.length === 0
+                      ? 'border-blue-200 bg-blue-50'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                    Overview
+                  </span>
+                  <span className="mt-2 block text-sm font-semibold text-slate-900">
+                    Project tracker
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Progress, records, and narrative arc development
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+                  Meetings
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => void Promise.all([loadMeetings(), loadDashboard()])}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              </div>
+              <nav className="mt-3 space-y-2" aria-label="Meetings">
+                {meetings.map((meeting) => {
+                  const isActive = meeting.id === selectedMeetingId;
+                  return (
+                    <button
+                      key={meeting.id}
+                      type="button"
+                      onClick={() => {
+                        setSearchResults([]);
+                        startTransition(() => {
+                          setActiveSurface('meeting');
+                          setSelectedMeetingId(meeting.id);
+                        });
+                      }}
+                      className={`block w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                        isActive && activeSurface === 'meeting'
+                          ? 'border-blue-200 bg-blue-50'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                        {meeting.meeting_date}
+                      </span>
+                      <span className="mt-2 block text-sm font-semibold text-slate-900">
+                        {meeting.title_original}
+                      </span>
+                      {meeting.title_en && (
+                        <span className="mt-1 block text-xs text-slate-500">
+                          {meeting.title_en}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
           </aside>
-          <main className="min-w-0 bg-[#f4f6f3]">
-            {isLoading && !detail && <div className="grid min-h-[60vh] place-items-center text-sm text-slate-500">Loading project ledger...</div>}
-            {!isLoading && meetings.length === 0 && <EmptyLedger onAdd={() => setShowMeetingForm(true)} />}
-            {detail && <MeetingWorkspace detail={detail} api={api} permissions={status?.permissions || []} onReload={() => loadDetail(detail.meeting.id)} />}
+
+          <main className="min-h-0 overflow-auto">
+            {searchResults.length > 0 ? (
+              <SearchResultsPanel
+                query={search}
+                results={searchResults}
+                onOpenMeeting={(meetingId) => {
+                  setSearchResults([]);
+                  startTransition(() => {
+                    setActiveSurface('meeting');
+                    setSelectedMeetingId(meetingId);
+                  });
+                }}
+              />
+            ) : isLoading && (activeSurface === 'dashboard' ? !dashboard : !detail) ? (
+              <div className="grid min-h-full place-items-center px-6 text-sm text-slate-500">
+                Loading progress portal...
+              </div>
+            ) : !isLoading && meetings.length === 0 ? (
+              <EmptyLedger onAdd={() => setShowMeetingForm(true)} canWrite={canWrite} />
+            ) : activeSurface === 'dashboard' && dashboard ? (
+              <ProjectProgressPage
+                dashboard={dashboard}
+                onOpenMeeting={(meetingId) => {
+                  startTransition(() => {
+                    setActiveSurface('meeting');
+                    setSelectedMeetingId(meetingId);
+                  });
+                }}
+              />
+            ) : detail ? (
+              <MeetingWorkspace
+                detail={detail}
+                api={api}
+                permissions={status?.permissions || []}
+                onReload={async () => {
+                  await Promise.all([loadDetail(detail.meeting.id), loadDashboard()]);
+                }}
+              />
+            ) : (
+              <div className="grid min-h-full place-items-center px-6 text-sm text-slate-500">
+                Choose a meeting to inspect its archive structure.
+              </div>
+            )}
           </main>
         </div>
-      )}
+      </div>
 
-      {showMeetingForm && <MeetingForm api={api} onClose={() => setShowMeetingForm(false)} onCreated={async () => { await loadMeetings(); setShowMeetingForm(false); }} />}
+      {showMeetingForm && (
+        <MeetingForm
+          api={api}
+          onClose={() => setShowMeetingForm(false)}
+          onCreated={async () => {
+            const [payload] = await Promise.all([loadMeetings(), loadDashboard()]);
+            const nextMeeting = payload[0]?.id || null;
+            setActiveSurface('meeting');
+            setSelectedMeetingId(nextMeeting);
+            if (nextMeeting) {
+              await loadDetail(nextMeeting);
+            }
+            setShowMeetingForm(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function EmptyLedger({ onAdd }: { onAdd: () => void }) {
-  return <div className="grid min-h-[70vh] place-items-center p-8"><div className="max-w-xl text-center"><p className="text-xs font-black uppercase tracking-[0.2em] text-teal-700">Start the ledger</p><h2 className="mt-3 font-serif text-5xl font-semibold">Document how project data become evidence.</h2><button onClick={onAdd} className="mt-6 rounded-full bg-teal-800 px-6 py-3 text-sm font-bold text-white">Add the first meeting</button></div></div>;
+function SearchResultsPanel({
+  query,
+  results,
+  onOpenMeeting,
+}: {
+  query: string;
+  results: ProgressSearchResult[];
+  onOpenMeeting: (meetingId: string) => void;
+}) {
+  return (
+    <div className="p-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+          Bilingual Retrieval
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+          Results for “{query}”
+        </h2>
+      </div>
+      <div className="mt-4 space-y-3">
+        {results.map((result) => (
+          <button
+            key={`${result.source_kind}:${result.source_id}`}
+            type="button"
+            onClick={() => {
+              if (result.meeting_id) onOpenMeeting(result.meeting_id);
+            }}
+            className="block w-full rounded-xl border border-slate-200 bg-white p-5 text-left hover:bg-slate-50"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
+                {result.source_kind.replaceAll('_', ' ')}
+              </span>
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700">
+                {searchBasis[result.retrieval_basis]}
+              </span>
+              <span className="text-slate-400">Matched: {result.matched_term}</span>
+            </div>
+            {result.title && (
+              <h3 className="mt-3 text-lg font-semibold text-slate-900">
+                {result.title}
+              </h3>
+            )}
+            {result.original_text && (
+              <p className="mt-3 text-sm leading-6 text-slate-800">
+                {result.original_text}
+              </p>
+            )}
+            {(result.translation_en || result.translation_ja) && (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+                {result.translation_en || result.translation_ja}
+              </p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
-function MeetingForm({ api, onClose, onCreated }: { api: ProgressApi; onClose: () => void; onCreated: () => Promise<void> }) {
+function EmptyLedger({
+  onAdd,
+  canWrite,
+}: {
+  onAdd: () => void;
+  canWrite: boolean;
+}) {
+  return (
+    <div className="grid min-h-full place-items-center p-8">
+      <div className="max-w-xl rounded-2xl border border-slate-200 bg-white p-8 text-center">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+          Start The Ledger
+        </p>
+        <h2 className="mt-3 text-3xl font-semibold text-slate-900">
+          Document how meetings turn source material into evidence.
+        </h2>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="mt-6 h-10 rounded-lg border border-slate-200 bg-white px-5 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+          >
+            Add The First Meeting
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MeetingForm({
+  api,
+  onClose,
+  onCreated,
+}: {
+  api: ProgressApi;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [location, setLocation] = useState('');
   const [saving, setSaving] = useState(false);
+
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setSaving(true);
-    try { await api('/meetings', { method: 'POST', body: JSON.stringify({ title_original: title, meeting_date: date, location: location || null, meeting_type: 'hybrid' }) }); await onCreated(); } finally { setSaving(false); }
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await api('/meetings', {
+        method: 'POST',
+        body: JSON.stringify({
+          title_original: title,
+          meeting_date: date,
+          location: location || null,
+          meeting_type: 'hybrid',
+        }),
+      });
+      await onCreated();
+    } finally {
+      setSaving(false);
+    }
   };
-  return <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><form onSubmit={submit} className="w-full max-w-lg rounded-3xl bg-[#fffdf7] p-7 shadow-2xl"><div className="flex justify-between"><h2 className="font-serif text-3xl font-semibold">Add a meeting</h2><button type="button" onClick={onClose} className="text-sm text-slate-500">Close</button></div><div className="mt-6 space-y-4"><label className="block text-sm font-bold">Original title<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 font-normal" /></label><label className="block text-sm font-bold">Date<input required type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 font-normal" /></label><label className="block text-sm font-bold">Location<input value={location} onChange={(event) => setLocation(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 font-normal" /></label></div><button disabled={saving} className="mt-6 rounded-full bg-teal-800 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Creating...' : 'Create meeting'}</button></form></div>;
+
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+              Progress Portal
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+              Add Meeting
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-slate-500 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-6 space-y-4">
+          <label className="block text-sm font-semibold text-slate-700">
+            Original title
+            <input
+              required
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-slate-700">
+            Date
+            <input
+              required
+              type="date"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+              className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-slate-700">
+            Location
+            <input
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
+            />
+          </label>
+        </div>
+
+        <button
+          disabled={saving}
+          className="mt-6 h-10 rounded-lg border border-slate-200 bg-white px-5 text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? 'Creating' : 'Create Meeting'}
+        </button>
+      </form>
+    </div>
+  );
 }
