@@ -85,6 +85,8 @@ export default function RepositoryWorkbench({
   const [isCreating, setIsCreating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [processingJobs, setProcessingJobs] = useState<string[]>([]);
+  const [processingNotice, setProcessingNotice] = useState<string | null>(null);
   const [repositoryApiAvailable, setRepositoryApiAvailable] = useState(true);
   const [extractedPreview, setExtractedPreview] = useState<ExtractedPreview | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
@@ -179,7 +181,6 @@ export default function RepositoryWorkbench({
   const embeddingAssistantReady = hasExplicitEmbeddingStatus
     ? Boolean(aiStatus?.embedding_configured)
     : Boolean(aiStatus?.provider_configured);
-  const evidenceAssistantReady = Boolean(chatAssistantReady && embeddingAssistantReady);
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -373,6 +374,15 @@ export default function RepositoryWorkbench({
           const message = await parseErrorResponse(fileResponse, `Failed to upload ${file.name}`);
           throw new Error(message);
         }
+        const uploaded = await fileResponse.json();
+        if (uploaded.processing_job_id && ['queued', 'running'].includes(uploaded.processing_status)) {
+          setProcessingJobs((current) => [...current, uploaded.processing_job_id]);
+          setProcessingNotice('Files saved. Extraction, OCR, and search indexing are running.');
+        } else if (uploaded.processing_message) {
+          setProcessingNotice(uploaded.processing_message);
+        } else if (!uploaded.processing_status) {
+          setProcessingNotice('Files saved. This backend requires you to run Extract to prepare search.');
+        }
       }
       await loadMaterials();
       if (firstCreatedId) setSelectedId(firstCreatedId);
@@ -393,6 +403,58 @@ export default function RepositoryWorkbench({
     const data = await response.json();
     setExtractedPreview(data);
   }, [repositoryFetch]);
+
+  useEffect(() => {
+    if (!processingJobs.length) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const checkJobs = async () => {
+      try {
+        const jobs = await Promise.all(processingJobs.map(async (id) => {
+          const response = await apiFetch(`${API_BASE_URL}/progress/jobs/${id}`, { signal: controller.signal });
+          if (!response.ok) throw new Error('Could not check processing. Reopen the workbench to check extracted evidence.');
+          return { id, ...await response.json() };
+        }));
+        if (controller.signal.aborted) return;
+        const finished = jobs.filter((job) => !['queued', 'running'].includes(job.status));
+        if (finished.length) {
+          const warnings = finished.flatMap((job) => job.status === 'completed'
+            ? job.result?.warnings || [] : [job.error_message || 'Processing failed. Use Extract or Prepare Search to retry.']);
+          setProcessingNotice(warnings.length ? warnings.join(' ') : 'Processing completed. Extracted evidence is ready for search.');
+          await loadMaterials(controller.signal);
+          if (selectedId) {
+            await loadExtractedPreview(selectedId);
+            const detail = await repositoryFetch(`/materials/${selectedId}`, { signal: controller.signal });
+            if (detail.ok && !controller.signal.aborted) setSelectedMaterial(await detail.json());
+          }
+          await loadAiStatus();
+          if (!controller.signal.aborted) setProcessingJobs((current) => current.filter((id) => !finished.some((job) => job.id === id)));
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setProcessingNotice(getErrorMessage(err, 'Could not check processing progress.'));
+      }
+      if (!controller.signal.aborted) timer = window.setTimeout(checkJobs, 3000);
+    };
+    timer = window.setTimeout(checkJobs, 1500);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [processingJobs, apiFetch, selectedId, loadMaterials, loadExtractedPreview, repositoryFetch, loadAiStatus]);
+
+  const prepareSearch = async () => {
+    setError(null);
+    try {
+      const response = await repositoryFetch('/ai/index/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 100 }),
+      });
+      if (!response.ok) throw new Error(await parseErrorResponse(response, 'Could not queue search indexing.'));
+      const job = await response.json();
+      if (!job.job_id) throw new Error('The backend did not return an indexing job.');
+      setProcessingJobs((current) => [...current, job.job_id]);
+      setProcessingNotice('Preparing missing text and image indexes across the library.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not prepare search.'));
+    }
+  };
 
   const loadObservations = useCallback(async (materialId: string) => {
     const response = await repositoryFetch(`/materials/${materialId}/observations`);
@@ -595,7 +657,7 @@ export default function RepositoryWorkbench({
               include_links: true,
               max_link_depth: 1,
               max_link_pages: 20,
-              max_segments: 1000,
+              max_segments: 5000,
             }),
           },
         );
@@ -1362,6 +1424,18 @@ export default function RepositoryWorkbench({
           </div>
         </header>
 
+        <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-2 text-xs text-slate-600" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{aiStatus?.status_message || 'Checking search services…'} {aiStatus && `${aiStatus.embedded_segment_count || 0}/${aiStatus.segment_count || 0} passages and ${aiStatus.embedded_image_count || 0}/${aiStatus.image_evidence_count || 0} images indexed.`}</span>
+            <button type="button" onClick={prepareSearch} disabled={(!embeddingAssistantReady && !aiStatus?.vision_configured) || processingJobs.length > 0}
+              className="rounded-lg border border-slate-200 px-3 py-1 font-semibold hover:bg-slate-50 disabled:opacity-40">
+              {processingJobs.length ? `Processing ${processingJobs.length} job(s)` : 'Prepare Search'}
+            </button>
+          </div>
+          <p className="mt-1">Uploads automatically prepare text and image evidence. PDF, PPTX, DOCX, images, and text files support content search; other formats support metadata search.</p>
+          {processingNotice && <p className="mt-1 text-amber-800">{processingNotice}</p>}
+        </div>
+
         {error && (
           <div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -1379,7 +1453,7 @@ export default function RepositoryWorkbench({
             <input
               value={search}
               onChange={(event) => { setSearch(event.target.value); setMaterialPage(0); }}
-              placeholder="Title, author, filename, observation"
+              placeholder="Title, filename, text, image labels"
               className="w-full h-10 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500"
             />
 
@@ -1523,7 +1597,7 @@ export default function RepositoryWorkbench({
                   <button
                     type="button"
                     onClick={runSemanticSearch}
-                    disabled={!evidenceAssistantReady || isRunningSemanticSearch || fullTextQuery.trim().length < 2}
+                    disabled={isRunningSemanticSearch || fullTextQuery.trim().length < 2}
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                   >
                     {isRunningSemanticSearch ? 'Finding' : 'Find Related References'}
@@ -1531,7 +1605,7 @@ export default function RepositoryWorkbench({
                   <button
                     type="button"
                     onClick={generateAiEvidenceReport}
-                    disabled={!evidenceAssistantReady || isGeneratingAiReport || fullTextQuery.trim().length < 2}
+                    disabled={isGeneratingAiReport || fullTextQuery.trim().length < 2}
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                   >
                     {isGeneratingAiReport ? 'Organizing' : 'Organize References'}
@@ -1539,7 +1613,7 @@ export default function RepositoryWorkbench({
                   <button
                     type="button"
                     onClick={() => setShowProcessReferencesPanel(true)}
-                    disabled={!evidenceAssistantReady || fullTextQuery.trim().length < 2}
+                    disabled={!chatAssistantReady || fullTextQuery.trim().length < 2}
                     className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                   >
                     Process References
@@ -1594,7 +1668,7 @@ export default function RepositoryWorkbench({
                     <button
                       type="button"
                       onClick={askCorpus}
-                      disabled={!evidenceAssistantReady || isAskingCorpus || activeCitedQuestion.length < 2}
+                      disabled={!chatAssistantReady || isAskingCorpus || activeCitedQuestion.length < 2}
                       className="rounded-lg bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-slate-700 disabled:opacity-40"
                     >
                       {isAskingCorpus ? 'Processing' : 'Process References'}
@@ -2058,7 +2132,7 @@ export default function RepositoryWorkbench({
                           ) {
                             return;
                           }
-                          extractMaterialText(selectedMaterial.id, (selectedMaterial.segment_count ?? 0) > 0);
+                          extractMaterialText(selectedMaterial.id);
                           notifyTutorialAction('extraction');
                         }}
                         disabled={
@@ -2288,7 +2362,7 @@ export default function RepositoryWorkbench({
 
                     {(selectedMaterial.segment_count ?? 0) > 0 && (
                       <p className="text-xs text-slate-400">
-                        This material already has extracted text. Use Extract in the header to refresh it.
+                        Extract prepares missing files and retries indexing while preserving existing evidence.
                       </p>
                     )}
 

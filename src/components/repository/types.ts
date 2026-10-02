@@ -157,10 +157,15 @@ export interface AIStatus {
   embedding_configured?: boolean;
   embedding_model?: string;
   chat_model?: string;
+  vision_model?: string;
+  vision_configured?: boolean;
   segment_count?: number;
   embedded_segment_count?: number;
   image_evidence_count?: number;
   embedded_image_count?: number;
+  pending_segment_count?: number;
+  pending_image_count?: number;
+  supported_upload_extensions?: string[];
   default_mode?: string;
   status_message?: string;
 }
@@ -178,7 +183,7 @@ export interface SemanticResult {
   page_index: number;
   content_text: string;
   score: number;
-  semantic_score?: number;
+  semantic_score?: number | null;
   retrieval_basis?: string;
   sense?: string;
   research_relevance?: 'high' | 'medium' | 'low';
