@@ -23,7 +23,10 @@ import {
   getExtractionBadgeClass,
   getObservationBadgeClass,
   getObservationTypeHint,
+  getRetrievalLabel,
   getRetrievalReason,
+  getSemanticScore,
+  imageEvidenceText,
   getSegmentText,
   guessSourceType,
   highlightSearchTerms,
@@ -36,6 +39,8 @@ import {
 } from './repository/formatters';
 import { buildPrintableReportHtml } from './repository/printableReport';
 import { SearchReportModal } from './repository/SearchReportModal';
+import { SearchCoveragePanel } from './repository/SearchCoveragePanel';
+import { AIEvidenceInspection } from './repository/AIEvidenceInspection';
 import type {
   AIEvidenceReport,
   AIStatus,
@@ -524,9 +529,7 @@ export default function RepositoryWorkbench({
 
   const startObservationFromImage = (image: ImageEvidence) => {
     const context = cleanAnnotationText(
-      [image.visual_caption, image.ocr_text]
-        .filter(Boolean)
-        .join('\n\n') || `${image.evidence_type} from ${image.page_ref}`,
+      imageEvidenceText(image) || `${image.evidence_type} from ${image.page_ref}`,
     );
     setObservationForm({
       ...EMPTY_OBSERVATION_FORM,
@@ -1157,11 +1160,11 @@ export default function RepositoryWorkbench({
             ${passage.material_year ? ` · ${escapeHtml(passage.material_year)}` : ''}
             · ${escapeHtml(passage.page_ref)}
             · ${escapeHtml(passage.source_locator)}
-            · ${(passage.score * 100).toFixed(1)} match
+            · ${escapeHtml(getRetrievalLabel(passage))}
           </p>
           ${printableEvidenceMeta(passage)}
           ${printableWordlistRows(passage.wordlist_rows)}
-          <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+          <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage, activeQueryTerms))}</p>
           <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
         </section>
       `)
@@ -1172,14 +1175,14 @@ export default function RepositoryWorkbench({
           <h2>Image ${index + 1}. ${escapeHtml(image.material_title || 'Image evidence')}</h2>
           <p class="meta">
             ${escapeHtml(image.page_ref)} · ${escapeHtml(image.source_locator)}
-            ${image.semantic_score ? ` · ${(image.semantic_score * 100).toFixed(1)} image-text match` : ''}
+            · ${escapeHtml(getRetrievalLabel(image))}
           </p>
           ${printableEvidenceMeta(image)}
           ${printableWordlistRows(image.wordlist_rows)}
           <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
           <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
           ${image.ocr_text ? `<h3>OCR Text</h3><p class="context">${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
-          ${image.visual_caption ? `<h3>Visual Caption</h3><p class="context">${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
+          ${image.visual_caption ? `<h3>AI Image Description</h3><p class="context">${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
         </section>
       `)
       .join('');
@@ -1189,7 +1192,8 @@ export default function RepositoryWorkbench({
       `
         <p><strong>Search seed:</strong> ${escapeHtml(fullTextQuery.trim())}</p>
         <p><strong>Research question:</strong> ${escapeHtml(askCorpusResult.question)}</p>
-        <p><strong>Mode:</strong> Retrieval-augmented answer from cited corpus passages only.</p>
+        <p><strong>Mode:</strong> Evidence response from retrieved text passages. Review claims against the original sources.</p>
+        ${askCorpusResult.generation_context ? `<p><strong>Generation:</strong> ${escapeHtml(askCorpusResult.generation_context.provider)} · ${escapeHtml(askCorpusResult.generation_context.model)} · first ${askCorpusResult.generation_context.passage_character_limit} characters per passage. Related images and their descriptions were excluded from generation.</p>` : ''}
       `,
       `
         <section class="result">
@@ -1207,7 +1211,7 @@ export default function RepositoryWorkbench({
   const downloadCitedAnswerReportCsv = () => {
     if (!askCorpusResult) return;
 
-    const query = activeCitedQuestion;
+    const query = askCorpusResult.question;
     const textRows = (askCorpusResult.retrieved_passages || []).map((passage, index) => [
       query,
       'text',
@@ -1217,10 +1221,10 @@ export default function RepositoryWorkbench({
       passage.material_year || '',
       passage.page_ref,
       passage.source_locator,
-      `${(passage.score * 100).toFixed(1)}%`,
+      getSemanticScore(passage) ?? '',
       passage.research_relevance || '',
       passage.evidence_type || '',
-      getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+      getRetrievalReason(passage, activeQueryTerms),
       cleanAnnotationText(passage.content_text),
     ]);
 
@@ -1233,15 +1237,15 @@ export default function RepositoryWorkbench({
       image.material_year || '',
       image.page_ref,
       image.source_locator,
-      image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)}%` : '',
+      getSemanticScore(image) ?? '',
       image.research_relevance || '',
       image.evidence_type || '',
       image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.',
-      cleanAnnotationText([image.ocr_text, image.visual_caption].filter(Boolean).join('\n\n')),
+      cleanAnnotationText(imageEvidenceText(image)),
     ]);
 
     downloadCsvFile(`${buildReportFilename(query, 'assistedSearch')}.csv`, [
-      ['query', 'source_type', 'result_number', 'material_title', 'material_authors', 'material_year', 'page_ref', 'source_locator', 'match_score', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
+      ['query', 'source_type', 'result_number', 'material_title', 'material_authors', 'material_year', 'page_ref', 'source_locator', 'embedding_similarity', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
       ['answer', '', '', '', '', '', '', '', '', '', '', '', askCorpusResult.answer],
       ...textRows,
       ...imageRows,
@@ -1262,10 +1266,10 @@ export default function RepositoryWorkbench({
           </p>
           ${theme.passages
             .map((passage) => `
-              <h3>${escapeHtml(passage.page_ref)} · ${(passage.score * 100).toFixed(1)} match</h3>
+              <h3>${escapeHtml(passage.page_ref)} · ${escapeHtml(getRetrievalLabel(passage))}</h3>
               ${printableEvidenceMeta(passage)}
               ${printableWordlistRows(passage.wordlist_rows)}
-              <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+              <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage, activeQueryTerms))}</p>
               <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
             `)
             .join('')}
@@ -1276,7 +1280,7 @@ export default function RepositoryWorkbench({
               <img class="evidence-image" src="${escapeHtml(`${API_BASE_URL}${image.image_url}`)}" />
               <p><strong>Retrieval basis:</strong> ${escapeHtml(image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.')}</p>
               ${image.ocr_text ? `<p class="context"><strong>OCR:</strong> ${highlightSearchTermsHtml(image.ocr_text, activeQueryTerms)}</p>` : ''}
-              ${image.visual_caption ? `<p class="context"><strong>Caption:</strong> ${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
+              ${image.visual_caption ? `<p class="context"><strong>AI image description:</strong> ${highlightSearchTermsHtml(image.visual_caption, activeQueryTerms)}</p>` : ''}
             `)
             .join('')}
         </section>
@@ -1307,11 +1311,11 @@ export default function RepositoryWorkbench({
         'text',
         passageIndex + 1,
         passage.page_ref,
-        '',
-        `${(passage.score * 100).toFixed(1)}%`,
+        passage.source_locator || '',
+        getSemanticScore(passage) ?? '',
         passage.research_relevance || '',
         passage.evidence_type || '',
-        getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+        getRetrievalReason(passage, activeQueryTerms),
         cleanAnnotationText(passage.content_text),
       ]),
       ...(theme.image_passages || []).map((image, imageIndex) => [
@@ -1322,16 +1326,16 @@ export default function RepositoryWorkbench({
         theme.passages.length + imageIndex + 1,
         image.page_ref,
         image.source_locator,
-        image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)}%` : '',
+        getSemanticScore(image) ?? '',
         image.research_relevance || '',
         image.evidence_type || '',
         image.retrieval_basis || 'Image evidence retrieved from OCR/caption text.',
-        cleanAnnotationText([image.ocr_text, image.visual_caption].filter(Boolean).join('\n\n')),
+        cleanAnnotationText(imageEvidenceText(image)),
       ]),
     ]);
 
     downloadCsvFile(`${buildReportFilename(aiEvidenceReport.query, 'assistedSearch')}.csv`, [
-      ['query', 'group_number', 'material_title', 'source_type', 'result_number', 'page_ref', 'source_locator', 'match_score', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
+      ['query', 'group_number', 'material_title', 'source_type', 'result_number', 'page_ref', 'source_locator', 'embedding_similarity', 'research_relevance', 'evidence_type', 'retrieval_basis', 'evidence_text'],
       ...rows,
     ]);
   };
@@ -1426,13 +1430,18 @@ export default function RepositoryWorkbench({
 
         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-2 text-xs text-slate-600" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>{aiStatus?.status_message || 'Checking search services…'} {aiStatus && `${aiStatus.embedded_segment_count || 0}/${aiStatus.segment_count || 0} passages and ${aiStatus.embedded_image_count || 0}/${aiStatus.image_evidence_count || 0} images indexed.`}</span>
+            <span>{aiStatus?.status_message || 'Checking search services…'}</span>
             <button type="button" onClick={prepareSearch} disabled={(!embeddingAssistantReady && !aiStatus?.vision_configured) || processingJobs.length > 0}
               className="rounded-lg border border-slate-200 px-3 py-1 font-semibold hover:bg-slate-50 disabled:opacity-40">
               {processingJobs.length ? `Processing ${processingJobs.length} job(s)` : 'Prepare Search'}
             </button>
           </div>
           <p className="mt-1">Uploads automatically prepare text and image evidence. PDF, PPTX, DOCX, images, and text files support content search; other formats support metadata search.</p>
+          <SearchCoveragePanel
+            repositoryFetch={repositoryFetch}
+            selectedMaterialId={selectedMaterial?.id ?? null}
+            refreshKey={`${materialTotal}:${processingJobs.join(',')}:${aiStatus?.segment_count}:${aiStatus?.embedded_segment_count}:${aiStatus?.embedded_image_count}`}
+          />
           {processingNotice && <p className="mt-1 text-amber-800">{processingNotice}</p>}
         </div>
 
@@ -1684,7 +1693,7 @@ export default function RepositoryWorkbench({
                   </div>
                   {semanticResults.results.length === 0 && (
                     <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm text-slate-400">
-                      No semantic evidence results returned.
+                      No evidence matches returned. Check search coverage before interpreting this as an evidence gap.
                     </div>
                   )}
                   {semanticResults.results.slice(0, 5).map((result) => (
@@ -1701,14 +1710,14 @@ export default function RepositoryWorkbench({
                           {result.material_title}
                         </div>
                         <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                          {(result.score * 100).toFixed(1)} match
+                          {getRetrievalLabel(result)}
                         </div>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-400">
                         {result.page_ref} · {result.source_locator}
                       </div>
                       <div className="mt-1 text-[11px] font-semibold text-blue-700">
-                        {getRetrievalReason(result.content_text, activeQueryTerms, result.score)}
+                        {getRetrievalReason(result, activeQueryTerms)}
                       </div>
                       <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
                         {highlightSearchTerms(cleanAnnotationText(result.content_text), activeQueryTerms)}
@@ -1738,7 +1747,7 @@ export default function RepositoryWorkbench({
                                 {image.material_title || 'Image evidence'}
                               </div>
                               <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                                {image.semantic_score ? `${(image.semantic_score * 100).toFixed(1)} image match` : image.evidence_type}
+                                {getRetrievalLabel(image)}
                               </div>
                             </div>
                             <div className="mt-1 text-[11px] text-slate-400">
@@ -1748,7 +1757,7 @@ export default function RepositoryWorkbench({
                               {image.retrieval_basis}
                             </div>
                             <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
-                              {highlightSearchTerms(cleanAnnotationText(image.ocr_text || image.visual_caption || ''), activeQueryTerms)}
+                              {highlightSearchTerms(cleanAnnotationText(imageEvidenceText(image)), activeQueryTerms)}
                             </div>
                           </div>
                         </button>
@@ -1809,11 +1818,16 @@ export default function RepositoryWorkbench({
                     </details>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    Retrieval-augmented answer from cited passages only. Use it for definitions, relationships, comparisons, process questions, and evidence gaps.
+                    {askCorpusResult.generation_context ? 'Generated draft from retrieved text passages. ' : 'Evidence response. '}
+                    Verify each claim against its source before using it in research. Similarity measures retrieval closeness; it is not a probability that a claim is correct.
                   </p>
                   <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
                     {askCorpusResult.answer}
                   </p>
+                  <AIEvidenceInspection
+                    context={askCorpusResult.generation_context}
+                    onOpenSource={(passage) => openAnnotationWorkspace(passage.material_id, 'segments', passage.segment_id)}
+                  />
                   {askCorpusResult.citations && askCorpusResult.citations.length > 0 && (
                     <div className="mt-3 border-t border-slate-200 pt-3">
                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
@@ -1905,7 +1919,7 @@ export default function RepositoryWorkbench({
                             }`}
                           >
                             <div className="mb-1 font-bold text-slate-400">
-                              {passage.page_ref} · {(passage.score * 100).toFixed(1)} match
+                              {passage.page_ref} · {getRetrievalLabel(passage)}
                             </div>
                             <div className="mb-2 flex flex-wrap gap-1">
                               {passage.research_relevance && (
@@ -1920,7 +1934,7 @@ export default function RepositoryWorkbench({
                               )}
                             </div>
                             <div className="mb-2 font-semibold text-blue-700">
-                              {passage.relevance_reason || getRetrievalReason(passage.content_text, activeQueryTerms, passage.score)}
+                              {passage.relevance_reason || getRetrievalReason(passage, activeQueryTerms)}
                             </div>
                             {highlightSearchTerms(truncateText(cleanAnnotationText(passage.content_text), 320), activeQueryTerms)}
                           </button>
@@ -1958,7 +1972,7 @@ export default function RepositoryWorkbench({
                               <div className="mb-2 font-semibold text-blue-700">
                                 {image.relevance_reason || image.retrieval_basis}
                               </div>
-                              {highlightSearchTerms(truncateText(cleanAnnotationText(image.ocr_text || image.visual_caption || ''), 240), activeQueryTerms)}
+                              {highlightSearchTerms(truncateText(cleanAnnotationText(imageEvidenceText(image)), 240), activeQueryTerms)}
                             </div>
                           </button>
                         ))}
@@ -2559,7 +2573,7 @@ export default function RepositoryWorkbench({
                           )}
                           {image.visual_caption && (
                             <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
-                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vision Caption</div>
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI Image Description · review required</div>
                               <p className="mt-2 text-sm leading-relaxed text-slate-700">
                                 {highlightSearchTerms(image.visual_caption, activeQueryTerms)}
                               </p>

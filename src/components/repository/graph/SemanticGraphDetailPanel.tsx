@@ -210,6 +210,15 @@ export function SemanticGraphDetailPanel({
         )}
       </div>
       <h5 className="mt-2 text-lg font-black leading-tight text-slate-800">{entity.label}</h5>
+      {entity.properties.identity_status === 'legacy_lossy' && (
+        <div role="note" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
+          <p className="font-bold">Check this older entity name</p>
+          <p className="mt-1">
+            Earlier text normalization may have combined different source forms. This record is preserved for existing references;
+            Atlas rebuilds regenerate relationships. Review original spellings and evidence before using the earlier interpretation.
+          </p>
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1">
         <span className="bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
           {formatEvidenceLabel(entity.type)}

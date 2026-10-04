@@ -1,4 +1,4 @@
-import type { ExtractedPreview } from './types';
+import type { ExtractedPreview, ImageEvidence, SemanticResult } from './types';
 
 export function compactPayload(form: Record<string, string>) {
   return Object.fromEntries(
@@ -308,10 +308,36 @@ export function highlightSearchTerms(text: string, terms: string[]) {
   });
 }
 
-export function getRetrievalReason(text: string, terms: string[], score?: number) {
+type RetrievalEvidence = Pick<SemanticResult, 'score' | 'semantic_score' | 'retrieval_method' | 'retrieval_basis'>;
+
+export function getSemanticScore(evidence: Partial<RetrievalEvidence>) {
+  if (evidence.retrieval_method === 'exact_text' || evidence.semantic_score === null) return undefined;
+  const score = evidence.semantic_score ?? (evidence.retrieval_method === 'embedding_similarity' ? evidence.score : undefined);
+  return typeof score === 'number' && Number.isFinite(score) ? score : undefined;
+}
+
+export function getRetrievalLabel(evidence: Partial<RetrievalEvidence>) {
+  if (evidence.retrieval_method === 'exact_text' || evidence.semantic_score === null) return 'Exact text match';
+  const score = getSemanticScore(evidence);
+  return score === undefined ? 'Retrieved evidence' : `Embedding similarity ${score.toFixed(3)}`;
+}
+
+export function imageEvidenceText(image: ImageEvidence) {
+  return [
+    image.ocr_text ? `OCR text:\n${image.ocr_text}` : '',
+    image.visual_caption ? `AI image description:\n${image.visual_caption}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+export function getRetrievalReason(evidence: Partial<RetrievalEvidence> & { content_text: string }, terms: string[]) {
+  if (evidence.retrieval_method === 'exact_text' || evidence.semantic_score === null) {
+    return evidence.retrieval_basis || 'Exact match in extracted text; embedding similarity was not used.';
+  }
+  const score = getSemanticScore(evidence);
+  if (score === undefined) return evidence.retrieval_basis || 'Retrieval details are unavailable for this passage.';
   const regex = buildHighlightRegex(terms);
-  const cleanedText = cleanAnnotationText(text || '');
-  const scoreText = typeof score === 'number' ? `${(score * 100).toFixed(1)} semantic score` : 'semantic score';
+  const cleanedText = cleanAnnotationText(evidence.content_text || '');
+  const scoreText = `similarity ${score.toFixed(3)}`;
 
   if (!regex || !cleanedText) {
     return `Retrieved by embedding similarity (${scoreText}); no exact search token was available for comparison.`;

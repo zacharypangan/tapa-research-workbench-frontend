@@ -184,6 +184,8 @@ export interface SemanticResult {
   content_text: string;
   score: number;
   semantic_score?: number | null;
+  retrieval_method?: 'exact_text' | 'embedding_similarity';
+  matched_terms?: string[];
   retrieval_basis?: string;
   sense?: string;
   research_relevance?: 'high' | 'medium' | 'low';
@@ -211,10 +213,12 @@ export interface ImageEvidence {
   extraction_method?: string;
   ocr_text?: string | null;
   visual_caption?: string | null;
-  semantic_score?: number;
+  semantic_score?: number | null;
+  retrieval_method?: 'exact_text' | 'embedding_similarity';
   score?: number;
   matched_terms?: string[];
   contains_exact_term?: boolean;
+  matched_text_sources?: Array<'ocr_text' | 'visual_caption' | 'observation_labels' | 'metadata'>;
   retrieval_basis?: string;
   evidence_level?: string;
   sense?: string;
@@ -238,6 +242,22 @@ export interface AskCorpusResponse {
   question: string;
   provider_configured: boolean;
   answer: string;
+  generation_context?: {
+    provider: string;
+    model: string;
+    images_included: boolean;
+    passage_character_limit: number;
+    passages: Array<{
+      citation_number: number;
+      segment_id: number;
+      material_id: string;
+      material_title: string;
+      page_ref: string;
+      source_locator: string;
+      excerpt: string;
+      truncated: boolean;
+    }>;
+  };
   citations?: Array<{
     material_id: string;
     material_title: string;
@@ -269,6 +289,11 @@ export interface AIEvidenceReport {
       segment_id: number;
       page_ref: string;
       score: number;
+      semantic_score?: number | null;
+      retrieval_method?: 'exact_text' | 'embedding_similarity';
+      retrieval_basis?: string;
+      matched_terms?: string[];
+      source_locator?: string;
       content_text: string;
       sense?: string;
       research_relevance?: 'high' | 'medium' | 'low';

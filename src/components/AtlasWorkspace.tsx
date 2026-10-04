@@ -23,6 +23,7 @@ import type {
   SemanticEntityDetail,
   SemanticEntityEvidence,
   SemanticEvidenceFocus,
+  SemanticGraphBuildResult,
   SemanticGraphPayload,
   SemanticRelationEvidence,
 } from './repository/graph/graphTypes';
@@ -124,6 +125,7 @@ export function AtlasWorkspace({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [buildResult, setBuildResult] = useState<SemanticGraphBuildResult | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [loadingEntityId, setLoadingEntityId] = useState<string | null>(null);
   const [loadingEvidenceId, setLoadingEvidenceId] =
@@ -410,6 +412,7 @@ export function AtlasWorkspace({
 
   const buildAtlas = async () => {
     setIsBuilding(true);
+    setBuildResult(null);
     setError('');
     try {
       const response = await repositoryFetch('/graph/semantic/build', {
@@ -422,6 +425,7 @@ export function AtlasWorkspace({
           await responseError(response, 'Semantic Atlas build failed.'),
         );
       }
+      setBuildResult((await response.json()) as SemanticGraphBuildResult);
       await Promise.all([loadGraph(), loadDataTools()]);
     } catch (buildError) {
       setError(
@@ -838,6 +842,19 @@ export function AtlasWorkspace({
                   {isExpanded ? 'Exit Full Screen' : 'Full Screen'}
                 </button>
               </div>
+
+              {buildResult && (
+                <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${(buildResult.legacy_identity_review_count ?? 0) > 0 ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
+                  <p className="font-bold">Atlas rebuilt from repository evidence.</p>
+                  {(buildResult.legacy_identity_review_count ?? 0) > 0 && (
+                    <p className="mt-1">
+                      {buildResult.legacy_identity_review_count} older entity {buildResult.legacy_identity_review_count === 1 ? 'record needs' : 'records need'} a name review.
+                      {' '}Earlier text normalization may have combined different source forms. These records remain available for reference;
+                      rebuilt relationships preserve original scripts and accents. Review the original sources before carrying earlier interpretations forward.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {error && (
                 <div

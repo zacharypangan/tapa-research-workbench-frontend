@@ -7,6 +7,8 @@ import type {
   ProgressPresentation,
   ProgressSession,
   ResearchRecord,
+  RecordProvenance,
+  OpenResearchEvidence,
   TranscriptPage,
   TranscriptSegment,
 } from './types';
@@ -25,6 +27,7 @@ interface MeetingWorkspaceProps {
   api: ProgressApi;
   permissions: string[];
   onReload: () => Promise<void>;
+  onOpenResearchEvidence?: OpenResearchEvidence;
 }
 
 const RECORD_TYPES = [
@@ -83,13 +86,46 @@ const nonTranscriptMaterials = (materials: MeetingMaterialLink[]) =>
 
 function RecordCard({
   record,
+  api,
   canReview,
   onReview,
+  onOpenResearchEvidence,
 }: {
   record: ResearchRecord;
+  api: ProgressApi;
   canReview: boolean;
-  onReview: (recordId: string, decision: 'accepted' | 'rejected' | 'needs_review') => void;
+  onReview: (recordId: string, decision: 'accepted' | 'rejected' | 'needs_review', notes: string) => Promise<boolean>;
+  onOpenResearchEvidence?: OpenResearchEvidence;
 }) {
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [provenance, setProvenance] = useState<RecordProvenance | null>(null);
+  const [provenanceError, setProvenanceError] = useState('');
+  const [notes, setNotes] = useState(record.notes || '');
+  const [isReviewing, setIsReviewing] = useState(false);
+  const hasAiReference = typeof record.details?.ai_run_id === 'string';
+  useEffect(() => {
+    if (!showEvidence) return;
+    let active = true;
+    api<RecordProvenance>(`/records/${record.id}/provenance`)
+      .then((payload) => {
+        if (active) {
+          setProvenance(payload);
+          setProvenanceError('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setProvenanceError(error instanceof Error ? error.message : 'Could not load provenance.');
+      });
+    return () => { active = false; };
+  }, [api, record.id, record.reviewed_at, showEvidence]);
+  const submitReview = async (decision: 'accepted' | 'rejected' | 'needs_review') => {
+    setIsReviewing(true);
+    try {
+      await onReview(record.id, decision, notes);
+    } finally {
+      setIsReviewing(false);
+    }
+  };
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -100,6 +136,10 @@ function RecordCard({
           className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wider ${recordStatusClass(record.status)}`}
         >
           {label(record.status)}
+        </span>
+        <span className="text-xs text-slate-600">
+          {hasAiReference ? (provenance?.ai_run ? 'AI-assisted record' : 'AI provenance attached') : 'No AI generation recorded'}
+          {['candidate', 'needs_review'].includes(record.status) && ' · awaiting human review'}
         </span>
       </div>
       <h3 className="mt-3 text-lg font-semibold text-slate-900">
@@ -113,29 +153,124 @@ function RecordCard({
           {record.summary_en || record.summary_ja}
         </p>
       )}
+      {record.summary_en && record.summary_ja && (
+        <p lang="ja" className="mt-2 text-sm leading-6 text-slate-700">{record.summary_ja}</p>
+      )}
       {record.original_evidence && (
         <blockquote className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
           {record.original_evidence}
         </blockquote>
       )}
-      <div className="mt-4 flex items-center justify-between gap-3 text-xs text-slate-500">
-        <span>{record.evidence.length} evidence link{record.evidence.length === 1 ? '' : 's'}</span>
+      {record.reviewed_by && (
+        <p className="mt-3 text-xs text-slate-600">
+          Reviewed by {record.reviewed_by}
+          {record.reviewed_at && <> · <time dateTime={record.reviewed_at}>{new Date(record.reviewed_at).toLocaleString()}</time></>}
+        </p>
+      )}
+      {record.notes && (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <p className="text-xs font-semibold">Record / review notes</p>
+          <p className="mt-1 whitespace-pre-wrap">{record.notes}</p>
+        </div>
+      )}
+      <details className="mt-4 rounded-lg border border-slate-200 p-3" onToggle={(event) => setShowEvidence(event.currentTarget.open)}>
+        <summary className="cursor-pointer text-sm font-semibold text-blue-800">
+          Inspect evidence and provenance · {record.evidence.length} source{record.evidence.length === 1 ? '' : 's'}
+        </summary>
+        {showEvidence && (
+          <div className="mt-4 space-y-4">
+            {record.evidence.length === 0 && <p className="text-sm text-amber-800">No supporting source is linked to this record.</p>}
+            {record.evidence.map((evidence, index) => (
+              <section key={evidence.id} aria-label={`Evidence ${index + 1}`} className="rounded-lg bg-slate-50 p-3 text-sm">
+                <p className="font-semibold text-slate-700">Source {index + 1} · {label(evidence.source_kind)} · {label(evidence.relation || 'supports')}</p>
+                <p className="mt-1 break-words text-xs text-slate-600">{evidence.source_locator || 'No precise source locator saved.'}</p>
+                <p className="mt-3 text-xs font-semibold text-slate-600">Original evidence</p>
+                {evidence.citation_text_original
+                  ? <blockquote className="mt-1 whitespace-pre-wrap border-l-2 border-blue-300 pl-3 leading-6 text-slate-900">{evidence.citation_text_original}</blockquote>
+                  : <p className="mt-1 text-slate-500">No quotation saved for this source.</p>}
+                {evidence.citation_text_en && <div lang="en" className="mt-3"><p className="text-xs font-semibold text-slate-600">English translation</p><p className="mt-1 whitespace-pre-wrap leading-6">{evidence.citation_text_en}</p></div>}
+                {evidence.citation_text_ja && <div lang="ja" className="mt-3"><p className="text-xs font-semibold text-slate-600">日本語訳 / Japanese translation</p><p className="mt-1 whitespace-pre-wrap leading-6">{evidence.citation_text_ja}</p></div>}
+                {evidence.external_url && /^https?:\/\//i.test(evidence.external_url) && (
+                  <a href={evidence.external_url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-blue-800 underline">Open cited source (new tab)</a>
+                )}
+                {evidence.repository_material_id && onOpenResearchEvidence && (
+                  <button
+                    type="button"
+                    className="mt-3 block rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-50"
+                    aria-label={`Open source ${index + 1} in repository`}
+                    onClick={() => onOpenResearchEvidence({
+                      material_id: evidence.repository_material_id || undefined,
+                      segment_id: evidence.repository_segment_id,
+                      image_id: evidence.repository_image_id,
+                      source_locator: evidence.source_locator,
+                      snippet: evidence.citation_text_original || undefined,
+                      source: 'progress',
+                      view: evidence.repository_image_id ? 'images' : 'segments',
+                    })}
+                  >
+                    Open source in repository
+                  </button>
+                )}
+                {evidence.notes && <p className="mt-2 whitespace-pre-wrap text-slate-600">{evidence.notes}</p>}
+                {evidence.source_hash && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">Source fingerprint</summary><p className="mt-1 break-all font-mono">{evidence.source_hash}</p></details>}
+              </section>
+            ))}
+            {provenanceError && <p role="status" className="text-sm text-amber-800">Provenance details are unavailable: {provenanceError}</p>}
+            {!provenance && !provenanceError && <p role="status" className="text-sm text-slate-500">Loading provenance…</p>}
+            {provenance?.ai_run && (
+              <section className="border-t border-slate-200 pt-3 text-sm text-slate-700">
+                <p className="font-semibold">AI generation</p>
+                <p className="mt-1">{provenance.ai_run.provider} · {provenance.ai_run.model}</p>
+                <p className="mt-1 text-xs">Prompt version {provenance.ai_run.prompt_version} · {provenance.ai_run.source_count} input source{provenance.ai_run.source_count === 1 ? '' : 's'}</p>
+                <p className="mt-1 text-xs">Requested by {provenance.ai_run.requested_by} · <time dateTime={provenance.ai_run.created_at}>{new Date(provenance.ai_run.created_at).toLocaleString()}</time></p>
+                {record.confidence != null && <p className="mt-2 text-xs text-slate-600">Recorded AI confidence score: {record.confidence.toFixed(2)}. This is not a calibrated probability that the interpretation is correct.</p>}
+                <details className="mt-2 text-xs"><summary className="cursor-pointer">Generation identifiers</summary><p className="mt-1 break-all">Run: {provenance.ai_run.id}</p><p className="mt-1 break-all">Prompt fingerprint: {provenance.ai_run.prompt_hash}</p></details>
+              </section>
+            )}
+            {provenance && hasAiReference && !provenance.ai_run && <p className="text-sm text-amber-800">The attached AI run could not be verified for this record.</p>}
+            {provenance && provenance.review_history.length > 0 && (
+              <section className="border-t border-slate-200 pt-3 text-sm text-slate-700">
+                <p className="font-semibold">Recent review history</p>
+                <ol className="mt-2 space-y-3">
+                  {provenance.review_history.map((event) => (
+                    <li key={event.id}>
+                      <p className="text-xs">{event.actor_id} · <time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></p>
+                      {typeof event.changes.status?.after === 'string' && <p className="mt-1">Decision: {label(event.changes.status.after)}</p>}
+                      {typeof event.changes.notes?.after === 'string' && <p className="mt-1 whitespace-pre-wrap">{event.changes.notes.after}</p>}
+                      {event.changes.notes?.after === null && <p className="mt-1 text-slate-500">Review notes cleared.</p>}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+          </div>
+        )}
+      </details>
+      <div className="mt-4 text-xs text-slate-500">
         {canReview && ['candidate', 'needs_review'].includes(record.status) && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-100"
-              onClick={() => onReview(record.id, 'accepted')}
-            >
-              Accept
-            </button>
-            <button
-              type="button"
-              className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-rose-700 hover:bg-rose-100"
-              onClick={() => onReview(record.id, 'rejected')}
-            >
-              Reject
-            </button>
+          <div>
+            <label htmlFor={`review-notes-${record.id}`} className="block text-sm font-semibold text-slate-700">Review notes (optional)</label>
+            <textarea id={`review-notes-${record.id}`} value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={10000} rows={3} disabled={isReviewing} placeholder="Explain a correction, uncertainty, or reason for the decision." className="mt-2 w-full rounded-lg border border-slate-300 p-3 text-sm text-slate-900 disabled:opacity-50" />
+            <div className="mt-3 flex flex-wrap gap-2" aria-busy={isReviewing}>
+              <button
+                type="button"
+                disabled={isReviewing || record.evidence.length === 0}
+                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                onClick={() => void submitReview('accepted')}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                disabled={isReviewing}
+                className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                onClick={() => void submitReview('rejected')}
+              >
+                Reject
+              </button>
+              <button type="button" disabled={isReviewing} onClick={() => void submitReview('needs_review')} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-amber-800 disabled:opacity-50">Needs more review</button>
+            </div>
+            {isReviewing && <p role="status" className="mt-2">Saving review…</p>}
           </div>
         )}
       </div>
@@ -532,6 +667,7 @@ export function MeetingWorkspace({
   api,
   permissions,
   onReload,
+  onOpenResearchEvidence,
 }: MeetingWorkspaceProps) {
   const [tab, setTab] = useState<MeetingTab>('overview');
   const [transcriptQuery, setTranscriptQuery] = useState('');
@@ -586,18 +722,21 @@ export function MeetingWorkspace({
   const review = async (
     recordId: string,
     decision: 'accepted' | 'rejected' | 'needs_review',
+    notes: string,
   ) => {
     setError('');
     try {
       await api(`/records/${recordId}/review`, {
         method: 'POST',
-        body: JSON.stringify({ decision }),
+        body: JSON.stringify({ decision, notes }),
       });
       await onReload();
+      return true;
     } catch (reviewError) {
       setError(
         reviewError instanceof Error ? reviewError.message : 'Could not review record.',
       );
+      return false;
     }
   };
 
@@ -984,8 +1123,10 @@ export function MeetingWorkspace({
               <RecordCard
                 key={record.id}
                 record={record}
+                api={api}
                 canReview={canReview}
                 onReview={review}
+                onOpenResearchEvidence={onOpenResearchEvidence}
               />
             ))}
             {records.length === 0 && (

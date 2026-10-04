@@ -17,10 +17,12 @@ import type {
   ProgressMeeting,
   ProgressSearchResult,
   ProgressStatus,
+  OpenResearchEvidence,
 } from './progress/types';
 
 interface ProgressWorkspaceProps {
   headerNavigation?: ReactNode;
+  onOpenResearchEvidence?: OpenResearchEvidence;
 }
 
 const searchBasis = {
@@ -36,7 +38,7 @@ const responseError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) {
+export function ProgressWorkspace({ headerNavigation, onOpenResearchEvidence }: ProgressWorkspaceProps) {
   const { apiFetch, displayName } = useWorkbenchAuth();
   const [status, setStatus] = useState<ProgressStatus | null>(null);
   const [meetings, setMeetings] = useState<ProgressMeeting[]>([]);
@@ -372,6 +374,7 @@ export function ProgressWorkspace({ headerNavigation }: ProgressWorkspaceProps) 
                 detail={detail}
                 api={api}
                 permissions={status?.permissions || []}
+                onOpenResearchEvidence={onOpenResearchEvidence}
                 onReload={async () => {
                   await Promise.all([loadDetail(detail.meeting.id), loadDashboard()]);
                 }}

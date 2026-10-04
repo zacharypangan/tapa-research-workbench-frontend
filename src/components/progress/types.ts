@@ -1,3 +1,7 @@
+import type { ResearchEvidenceNavigation } from '../repository/types';
+
+export type OpenResearchEvidence = (target: Omit<ResearchEvidenceNavigation, 'request_id'>) => void;
+
 export interface ProgressStatus {
   available: boolean;
   role: string;
@@ -185,8 +189,38 @@ export interface EvidenceCitation {
   transcript_segment_id?: string | null;
   repository_material_id?: string | null;
   repository_segment_id?: number | null;
+  repository_image_id?: string | null;
+  external_url?: string | null;
   source_locator?: string | null;
   citation_text_original?: string | null;
+  citation_text_en?: string | null;
+  citation_text_ja?: string | null;
+  source_hash?: string | null;
+  notes?: string | null;
+  relation?: string;
+}
+
+export interface RecordProvenance {
+  record_id: string;
+  ai_run: {
+    id: string;
+    provider: string;
+    model: string;
+    prompt_version: string;
+    prompt_hash: string;
+    source_kind: string;
+    source_count: number;
+    status: string;
+    requested_by: string;
+    created_at: string;
+    finished_at?: string | null;
+  } | null;
+  review_history: {
+    id: string;
+    actor_id: string;
+    occurred_at: string;
+    changes: Record<string, { before?: unknown; after?: unknown }>;
+  }[];
 }
 
 export interface ResearchRecord {
@@ -204,6 +238,9 @@ export interface ResearchRecord {
   details: Record<string, unknown>;
   evidence: EvidenceCitation[];
   created_by: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  notes?: string | null;
 }
 
 export interface MeetingDetailPayload {

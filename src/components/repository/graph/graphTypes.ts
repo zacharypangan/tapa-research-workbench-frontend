@@ -76,6 +76,11 @@ export interface SemanticGraphPayload {
   evidence_note?: string;
 }
 
+export interface SemanticGraphBuildResult {
+  status: string;
+  legacy_identity_review_count?: number;
+}
+
 export interface SemanticGraphCandidate {
   id: string;
   source: string;

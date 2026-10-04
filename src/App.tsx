@@ -145,7 +145,7 @@ function App() {
               </div>
             }
           >
-            <ProgressWorkspace headerNavigation={headerNavigation} />
+            <ProgressWorkspace headerNavigation={headerNavigation} onOpenResearchEvidence={openResearchEvidence} />
           </Suspense>
         </div>
       )}
