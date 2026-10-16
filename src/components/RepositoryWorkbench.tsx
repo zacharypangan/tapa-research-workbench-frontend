@@ -432,6 +432,13 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
 
   useEffect(() => {
     if (!evidenceNavigation?.material_id) return;
+    if (evidenceNavigation.view === 'source') {
+      setSelectedId(evidenceNavigation.material_id);
+      setIsExtractedModalOpen(false);
+      setTargetSegmentId(null);
+      setTargetImageId(null);
+      return;
+    }
     openAnnotationWorkspace(
       evidenceNavigation.material_id,
       evidenceNavigation.view || 'segments',

@@ -64,7 +64,7 @@ export interface ResearchEvidenceNavigation {
   page_ref?: string | null;
   source_locator?: string | null;
   snippet?: string;
-  view?: 'segments' | 'images' | 'observations';
+  view?: 'source' | 'segments' | 'images' | 'observations';
 }
 
 export interface ExtractedPreview {

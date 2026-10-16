@@ -12,6 +12,8 @@ This branch starts from `origin/mvp-ollama-cloud` and adds one optional Knowledg
 
 Every relationship retains supporting evidence. Proposed cross-source comparisons remain distinguishable from source-reported relationships; inclusion does not imply specialist validation. Saved projects can be reopened using `?view=knowledge&graph=<run-id>`.
 
+Choose Open source record beside a quotation to inspect its repository details and attached files. The graph inspector retains the exact quotation and page locator; graph ingestion does not require the repository's separate text-extraction step. Create graph always starts a new form, including when no source is selected.
+
 ## API pairing
 
 The frontend uses the existing `VITE_API_BASE_URL` configuration. Its backend must include both the existing `/repository` API and the `/research-runs` API from the companion backend branch `codex/mvp-document-graphs`. A frontend-only deployment against the older backend will show graph-service errors.
@@ -22,6 +24,6 @@ No new frontend dependencies, database tables, authentication changes or additio
 
 ## Verification
 
-Run `npm run lint` and `npm run build`. In the paired preview, verify Sources → Create graph → document selection → extraction/manual concepts → optional web enrichment → review → graph download, and open a source quotation to return to Sources. Refresh a saved graph URL and confirm the project reopens.
+Run `npm run lint` and `npm run build`. In the paired preview, verify Sources → Create graph → document selection → extraction/manual concepts → optional web enrichment → review → graph download, and open a quotation's source record to return to Sources. Refresh a saved graph URL and confirm the project reopens. Start a new graph with no source selected and confirm the previous project does not reopen; existing segment/image evidence links should still open the corresponding extracted-content tab.
 
 Port checks on 2026-10-17: the production build and focused graph/App/type lint pass. Full-repository lint retains existing legacy findings; comparison against the hosted branch confirms that the two findings in the modified Sources component are unchanged (`no-explicit-any`).

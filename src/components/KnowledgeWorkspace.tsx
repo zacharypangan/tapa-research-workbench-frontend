@@ -36,8 +36,8 @@ async function responseError(response: Response) {
   const data = await response.json().catch(() => null) as { detail?: unknown } | null;
   if (typeof data?.detail === 'string') return data.detail;
   if (data?.detail && typeof data.detail === 'object' && 'message' in data.detail) return String(data.detail.message);
-  if (response.status === 401) return 'Please sign in again to continue.';
-  if (response.status === 403) return 'Your workspace role does not allow this action.';
+  if (response.status === 401) return 'Access to the graph service is not authorized. Contact your workspace administrator.';
+  if (response.status === 403) return 'The graph service does not allow this action.';
   if (response.status === 404) return 'This graph or service is not available. Refresh or contact your workspace administrator.';
   return `The request could not be completed (${response.status}). Please retry.`;
 }

@@ -81,7 +81,7 @@ function App() {
 
       {hasOpenedGraph && <div hidden={activeView !== 'knowledge'}>
         <Suspense fallback={<div className="grid min-h-screen place-items-center text-sm text-slate-500">Loading knowledge graph…</div>}>
-          <KnowledgeWorkspace headerNavigation={navigation} initialMaterial={graphMaterial} active={activeView === 'knowledge'} onOpenResearchEvidence={openResearchEvidence} />
+          <KnowledgeWorkspace key={graphMaterial?.requestId ?? 'saved-graph'} headerNavigation={navigation} initialMaterial={graphMaterial} active={activeView === 'knowledge'} onOpenResearchEvidence={openResearchEvidence} />
         </Suspense>
       </div>}
 

@@ -97,7 +97,7 @@ function evidenceTarget(source: GraphSource | undefined, evidence: GraphEvidence
   if (!match) return null;
   const locator = typeof evidence.locator === 'object' ? evidence.locator : {};
   return {
-    material_id: match[1], material_title: source?.title, view: 'segments',
+    material_id: match[1], material_title: source?.title, view: 'source',
     page_ref: (locator.pdf_page ?? locator.page ?? locator.page_number) === undefined ? null : String(locator.pdf_page ?? locator.page ?? locator.page_number),
     source_locator: locatorLabel(evidence), snippet: evidence.text,
   };
@@ -336,7 +336,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
               const source = sources.get(item.source_id);
               const target = evidenceTarget(source, item);
               const url = safeWebUrl(source);
-              return <article key={item.evidence_id} className="rge-evidence"><div className="rge-evidence-origin">{origin(source) === 'web' ? 'Web source' : 'Document'}</div><strong>{source?.title || 'Source'}</strong><p className="rge-evidence-locator">{locatorLabel(item)}</p><blockquote>{item.text}</blockquote>{onOpenResearchEvidence && target && <button type="button" onClick={() => onOpenResearchEvidence(target)}>Open in library</button>}{url && <a href={url} target="_blank" rel="noopener noreferrer">Open web source ↗</a>}<details><summary>Traceability details</summary><dl><dt>Source ID</dt><dd>{item.source_id}</dd><dt>Evidence ID</dt><dd>{item.evidence_id}</dd>{item.source_version_id && <><dt>Source version</dt><dd>{item.source_version_id}</dd></>}</dl><p>The quotation refers to the saved source version; a live page may have changed.</p></details></article>;
+              return <article key={item.evidence_id} className="rge-evidence"><div className="rge-evidence-origin">{origin(source) === 'web' ? 'Web source' : 'Document'}</div><strong>{source?.title || 'Source'}</strong><p className="rge-evidence-locator">{locatorLabel(item)}</p><blockquote>{item.text}</blockquote>{onOpenResearchEvidence && target && <button type="button" onClick={() => onOpenResearchEvidence(target)}>Open source record</button>}{url && <a href={url} target="_blank" rel="noopener noreferrer">Open web source ↗</a>}<details><summary>Traceability details</summary><dl><dt>Source ID</dt><dd>{item.source_id}</dd><dt>Evidence ID</dt><dd>{item.evidence_id}</dd>{item.source_version_id && <><dt>Source version</dt><dd>{item.source_version_id}</dd></>}</dl><p>The quotation refers to the saved source version; a live page may have changed.</p></details></article>;
             })}</div>
             {!selectedEvidence.length && <p className="rge-blocked">Source quotations are unavailable for this item.</p>}
             <div className="rge-review-actions">
