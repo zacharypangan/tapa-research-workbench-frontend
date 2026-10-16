@@ -15,6 +15,7 @@ export interface ResearchRun {
   detail?: string;
   error_type?: string;
   missing_batch_ids?: string[];
+  rejected_batch_ids?: string[];
   entity_count?: number;
   assertion_count?: number;
   alignment_count?: number;

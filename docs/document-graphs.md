@@ -12,6 +12,8 @@ This branch starts from `origin/mvp-ollama-cloud` and adds one optional Knowledg
 
 Every relationship retains supporting evidence. Proposed cross-source comparisons remain distinguishable from source-reported relationships; inclusion does not imply specialist validation. Saved projects can be reopened using `?view=knowledge&graph=<run-id>`.
 
+If assisted extraction fails the evidence checks, the workflow pauses at Concepts and explains that the source passages need review. Add or correct grounded concepts and relationships in the editor to continue; unchecked model output is not included automatically.
+
 Choose Open source record beside a quotation to inspect its repository details and attached files. The graph inspector retains the exact quotation and page locator; graph ingestion does not require the repository's separate text-extraction step. Create graph always starts a new form, including when no source is selected.
 
 ## API pairing

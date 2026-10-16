@@ -26,6 +26,7 @@ function stageNumber(run: ResearchRun) {
 }
 
 function runDescription(run: ResearchRun) {
+  if (run.status === 'awaiting_annotations' && run.rejected_batch_ids?.length) return 'Automated extraction did not pass the evidence checks for some passages. Review the source text and add or correct concepts below.';
   if (run.status === 'awaiting_annotations') return 'Read the source passages below and add the concepts and relationships they support.';
   if (run.status === 'awaiting_frontier') return 'Choose relevant public web pages below, or continue with document evidence only.';
   if (run.status === 'queue_failed') return 'The processing service is unavailable. Your documents are saved; retry when the service is ready.';
