@@ -55,7 +55,7 @@ const WORKFLOW_STATUS_ORDER = [
   'needs_review',
 ];
 
-export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal }: RepositoryWorkbenchProps) {
+export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal, headerNavigation, evidenceNavigation, onOpenKnowledgeGraph }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -297,6 +297,14 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   }, [loadMaterials]);
 
   useEffect(() => {
+    const refreshSources = () => {
+      void loadMaterials().catch((err) => setError(getErrorMessage(err, 'Could not refresh saved sources.')));
+    };
+    window.addEventListener('tapa-workbench:sources-updated', refreshSources);
+    return () => window.removeEventListener('tapa-workbench:sources-updated', refreshSources);
+  }, [loadMaterials]);
+
+  useEffect(() => {
     loadSelectedMaterial(selectedId).catch((err) => {
       setError(getErrorMessage(err, 'Failed to load material'));
     });
@@ -409,7 +417,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     setObservationForm((current) => ({ ...current, [key]: value }));
   };
 
-  const openAnnotationWorkspace = (
+  const openAnnotationWorkspace = useCallback((
     materialId: string,
     tab: 'segments' | 'images' | 'links' | 'observations' | 'runs' = 'segments',
     segmentId?: number | string | null,
@@ -420,7 +428,17 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     setTargetSegmentId(segmentId ?? null);
     setTargetImageId(imageId ?? null);
     setIsExtractedModalOpen(true);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!evidenceNavigation?.material_id) return;
+    openAnnotationWorkspace(
+      evidenceNavigation.material_id,
+      evidenceNavigation.view || 'segments',
+      evidenceNavigation.segment_id,
+      evidenceNavigation.image_id,
+    );
+  }, [evidenceNavigation, openAnnotationWorkspace]);
 
   const resetObservationForm = () => {
     setObservationForm(EMPTY_OBSERVATION_FORM);
@@ -1277,13 +1295,19 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
         {activeTutorialTarget && activeTutorialTarget !== 'workbench' && (
           <div className="pointer-events-none fixed inset-0 z-[20] bg-slate-950/45" aria-hidden="true" />
         )}
-        <header className="h-16 shrink-0 border-b border-slate-200 bg-white px-5 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <header className="min-h-16 shrink-0 border-b border-slate-200 bg-white px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-4">
             <div>
               <h2 className="text-sm font-black uppercase tracking-[0.18em]">Research Workbench</h2>
             </div>
+            {headerNavigation}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {onOpenKnowledgeGraph && (
+              <button type="button" onClick={() => onOpenKnowledgeGraph(selectedMaterial?.id)} className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100" title="Create a graph from the selected source">
+                Create graph
+              </button>
+            )}
             {onOpenTutorial && (
               <button
                 type="button"

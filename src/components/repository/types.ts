@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 export interface RepositoryFile {
   id: string;
   material_id: string;
@@ -47,6 +49,22 @@ export interface RepositoryWorkbenchProps {
   onTutorialAction?: (target: string) => void;
   initialFocus?: 'search';
   focusSignal?: number;
+  headerNavigation?: ReactNode;
+  evidenceNavigation?: ResearchEvidenceNavigation | null;
+  onOpenKnowledgeGraph?: (materialId?: string) => void;
+}
+
+export interface ResearchEvidenceNavigation {
+  request_id: number;
+  material_id?: string;
+  material_title?: string;
+  segment_id?: number | string | null;
+  image_id?: string | null;
+  observation_id?: string | null;
+  page_ref?: string | null;
+  source_locator?: string | null;
+  snippet?: string;
+  view?: 'segments' | 'images' | 'observations';
 }
 
 export interface ExtractedPreview {
