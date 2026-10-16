@@ -1,6 +1,20 @@
 # Frontend Deployment: Vercel
 
-## Document graph staging
+## Shared Workbench release branch
+
+Set the Vercel Production environment's branch to `codex/mvp-document-graphs`.
+The shared URL remains `https://tapa-research-workbench-frontend.vercel.app`.
+Production `VITE_API_BASE_URL` must keep the existing repository backend:
+
+```text
+https://tapa-research-workbench-backend-production.up.railway.app/api/v1
+```
+
+Deploy the matching backend branch to Railway `production` first, preserving
+its existing volume. The separate preview override below targets the isolated
+staging repository; it must not be used for the shared URL.
+
+## Document graph staging before release
 
 Stage `codex/mvp-document-graphs`, based on the hosted `mvp-ollama-cloud` branch.
 This adds the Knowledge graph workspace alongside the existing Sources view.
@@ -15,6 +29,11 @@ VITE_API_BASE_URL=https://tapa-research-workbench-backend-graph-staging.up.railw
 The Git preview URL follows future pushes to this branch. Production settings
 and the shared production URL are independent. See `docs/document-graphs.md`
 for the workflow and verification checklist.
+
+Before making this the Production branch, remove its temporary branch-specific
+Preview override. Vercel cannot assign a Production branch while that override
+exists. The already-built preview keeps its staging API configuration; future
+Production builds use the production API setting above.
 
 Deploy this directory as a Vercel Vite project.
 
