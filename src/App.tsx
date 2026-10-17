@@ -12,7 +12,10 @@ function App() {
   const [activeTutorialTarget, setActiveTutorialTarget] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>(() => new URLSearchParams(window.location.search).get('view') === 'knowledge' ? 'knowledge' : 'sources');
   const [hasOpenedGraph, setHasOpenedGraph] = useState(activeView === 'knowledge');
-  const [graphMaterial, setGraphMaterial] = useState<{ materialId?: string; requestId: number } | null>(null);
+  const [graphMaterial, setGraphMaterial] = useState<{ materialId?: string; requestId: number } | null>(() => {
+    const materialId = new URLSearchParams(window.location.search).get('material');
+    return materialId ? { materialId, requestId: 0 } : null;
+  });
   const [evidenceNavigation, setEvidenceNavigation] = useState<ResearchEvidenceNavigation | null>(null);
   const tutorialTimer = useRef<number | undefined>(undefined);
 
@@ -27,7 +30,7 @@ function App() {
     window.clearTimeout(tutorialTimer.current);
     const url = new URL(window.location.href);
     if (view === 'knowledge') url.searchParams.set('view', 'knowledge');
-    else { url.searchParams.delete('view'); url.searchParams.delete('graph'); }
+    else { url.searchParams.delete('view'); url.searchParams.delete('graph'); url.searchParams.delete('material'); }
     window.history.replaceState(null, '', url);
     if (view === 'knowledge') setHasOpenedGraph(true);
     setIsTutorialOpen(false);
@@ -38,6 +41,8 @@ function App() {
   const openKnowledgeGraph = useCallback((materialId?: string) => {
     const url = new URL(window.location.href);
     url.searchParams.delete('graph');
+    if (materialId) url.searchParams.set('material', materialId);
+    else url.searchParams.delete('material');
     window.history.replaceState(null, '', url);
     setGraphMaterial({ materialId, requestId: Date.now() });
     changeView('knowledge');

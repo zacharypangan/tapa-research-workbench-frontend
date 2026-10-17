@@ -270,8 +270,8 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   return (
     <div className="research-graph-explorer">
       <div className="rge-introduction">
-        <h3>Explore the evidence</h3>
-        <p>Each concept belongs to its source. Reported relationships show what a source says; proposed comparisons connect related document and web concepts for review.</p>
+        <h3>Entities and connections</h3>
+        <p>Select an entity or connection to read its supporting quotations.</p>
         <div className="rge-metrics" aria-label="Graph totals">
           <span><strong>{graph.sources.length.toLocaleString()}</strong> sources</span>
           <span><strong>{graph.entities.length.toLocaleString()}</strong> concepts</span>
@@ -281,9 +281,14 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       </div>
       <div className="rge-filters">
         <label className="rge-search">Search concepts, sources or quotations<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="For example: barkcloth, material or place" /></label>
+        <details className="rge-filter-options">
+          <summary>Filters{category !== 'all' || sourceFilter !== 'all' || statusFilter !== 'all' ? ' · active' : ''}</summary>
+          <div className="rge-filter-controls">
         <label>Show<select value={category} onChange={event => setCategory(event.target.value as Kind | 'all')}><option value="all">All items</option><option value="concept">Concepts</option><option value="relationship">Reported relationships</option><option value="comparison">Proposed comparisons</option></select></label>
         <label>Source<select value={sourceFilter} onChange={event => setSourceFilter(event.target.value as Origin | 'all')}><option value="all">All sources</option><option value="primary">Documents</option><option value="web">Web sources</option></select></label>
         <label>Review<select value={statusFilter} onChange={event => setStatusFilter(event.target.value as Status | 'all')}><option value="all">All decisions</option><option value="pending">Pending</option><option value="included">Included</option><option value="excluded">Excluded</option></select></label>
+          </div>
+        </details>
       </div>
       <div className="rge-network-heading">
         <h4>Connection overview</h4>
@@ -310,15 +315,15 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       ) : <p className="rge-empty">No concepts match these filters.</p>}
       <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
       <div className="rge-review-grid">
-        <section className="rge-candidate-list" aria-label="Searchable graph items">
-          <h4>{filtered.length.toLocaleString()} matching items</h4>
+        <details className="rge-candidate-list" aria-label="Searchable graph items">
+          <summary>Browse entities and connections <span>({filtered.length.toLocaleString()} items)</span></summary>
           {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(candidate => {
             const blocked = candidate.statement && candidate.entityIds.some(id => status(id) === 'excluded');
             return <button key={candidate.id} type="button" className={`rge-candidate ${selectedId === candidate.id ? 'rge-candidate-selected' : ''}`} onClick={() => setSelectedId(candidate.id)} aria-pressed={selectedId === candidate.id}><span className="rge-candidate-kind">{kindLabel[candidate.kind]}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></span><strong>{candidate.title}</strong><span className="rge-candidate-source">{candidate.sourceIds.map(id => sources.get(id)?.title || 'Source').join(' · ')}</span>{blocked && <span className="rge-blocked">Excluded from release: a required concept is excluded.</span>}</button>;
           })}
           {!filtered.length && <p className="rge-empty">No matching items. Try a broader search or another filter.</p>}
           {totalPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} of {totalPages}</span><button type="button" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</button></div>}
-        </section>
+        </details>
         <aside className="rge-inspector" aria-label="Selected item and source evidence">
           {!selected ? <div className="rge-empty-inspector"><h4>Start with a concept or connection</h4><p>Choose an item above or in the list to see its source quotations, context and review decisions.</p><p>Including an item approves its place in this graph. Specialist verification remains a separate research step.</p></div> : <>
             <div className="rge-inspector-top"><span>{kindLabel[selected.kind]}</span><span className={`rge-status rge-status-${status(selected.id)}`}>{statusLabel[status(selected.id)]}</span></div>

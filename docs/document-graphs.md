@@ -29,3 +29,7 @@ No new frontend dependencies, database tables, authentication changes or additio
 Run `npm run lint` and `npm run build`. In the paired preview, verify Sources → Create graph → document selection → extraction/manual concepts → optional web enrichment → review → graph download, and open a quotation's source record to return to Sources. Refresh a saved graph URL and confirm the project reopens. Start a new graph with no source selected and confirm the previous project does not reopen; existing segment/image evidence links should still open the corresponding extracted-content tab.
 
 Port checks on 2026-10-17: the production build and focused graph/App/type lint pass. Full-repository lint retains existing legacy findings; comparison against the hosted branch confirms that the two findings in the modified Sources component are unchanged (`no-explicit-any`).
+
+## Document shortcut
+
+Choose **View graph** on a Sources row or its Metadata panel. The graph page opens that document’s latest graph, or starts source-only entity extraction when none exists. The `material` and `graph` URL parameters preserve the document and selected graph on refresh. Unsupported files and evidence-check failures explain the next step. Both pages share the same Workbench header; graph filters, entity lists and additional creation options remain available in collapsed panels.

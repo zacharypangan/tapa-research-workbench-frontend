@@ -34,6 +34,7 @@ import {
 } from './repository/formatters';
 import { buildPrintableReportHtml } from './repository/printableReport';
 import { SearchReportModal } from './repository/SearchReportModal';
+import { WorkbenchHeader } from './WorkbenchHeader';
 import type {
   AIEvidenceReport,
   AIStatus,
@@ -1302,17 +1303,10 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
         {activeTutorialTarget && activeTutorialTarget !== 'workbench' && (
           <div className="pointer-events-none fixed inset-0 z-[20] bg-slate-950/45" aria-hidden="true" />
         )}
-        <header className="min-h-16 shrink-0 border-b border-slate-200 bg-white px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-4">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-[0.18em]">Research Workbench</h2>
-            </div>
-            {headerNavigation}
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
+        <WorkbenchHeader navigation={headerNavigation} actions={<>
             {onOpenKnowledgeGraph && (
-              <button type="button" onClick={() => onOpenKnowledgeGraph(selectedMaterial?.id)} className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100" title="Create a graph from the selected source">
-                Create graph
+              <button type="button" onClick={() => onOpenKnowledgeGraph(selectedMaterial?.id)} className="h-10 px-4 rounded-lg border border-slate-200 bg-white text-xs font-black uppercase tracking-wider hover:bg-slate-100" title="View the selected document's graph or start one from its files">
+                Open graph
               </button>
             )}
             {onOpenTutorial && (
@@ -1341,8 +1335,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                 onChange={(event) => uploadFiles(event.target.files)}
               />
             </label>
-          </div>
-        </header>
+        </>} />
 
         {error && (
           <div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1960,6 +1953,19 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
 
                       <td className="px-4 py-4 align-top">
                         <div className="flex flex-wrap gap-2">
+                          {onOpenKnowledgeGraph && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenKnowledgeGraph(material.id);
+                              }}
+                              className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:bg-blue-100"
+                              title="View this document's entities and connections, or start a graph from its files"
+                            >
+                              View graph
+                            </button>
+                          )}
                           <button
                             data-tutorial-target="content-button"
                             type="button"
@@ -2014,6 +2020,11 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
+                  {!isCreating && selectedMaterial && onOpenKnowledgeGraph && (
+                    <button type="button" onClick={() => onOpenKnowledgeGraph(selectedMaterial.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:bg-blue-100" title="View this document's entities and connections, or start a graph from its files">
+                      View graph
+                    </button>
+                  )}
                   {!isCreating && selectedMaterial && (
                     <>
                       <button

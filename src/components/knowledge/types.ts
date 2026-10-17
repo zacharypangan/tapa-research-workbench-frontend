@@ -7,6 +7,7 @@ export interface ResearchRun {
   updated_at: string;
   research_topic?: string;
   max_pages?: number;
+  augmentation_enabled?: boolean;
   document_count?: number;
   documents?: Array<{ source_id: string; title: string; locator: string }>;
   artifacts: string[];
