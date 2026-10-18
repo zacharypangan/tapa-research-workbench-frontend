@@ -5,7 +5,9 @@ interface ProcessingJob {
   status: string;
   stage: string;
   detail?: string;
-  stage_progress?: Record<string, { indexed_count?: number; pending_count?: number; failed_count?: number; skipped_count?: number }>;
+  retryable?: boolean;
+  stage_progress?: Record<string, { indexed_count?: number; pending_count?: number; failed_count?: number; skipped_count?: number;
+    error_summary?: Array<{ error_category: string; http_status?: number; retryable: boolean; count: number }> }>;
   completed_stages?: Record<string, { result?: { run_id?: string } }>;
 }
 
@@ -17,6 +19,7 @@ interface Preparation {
     eligible_image_count: number;
     embedded_image_count: number;
     skipped_image_count?: number;
+    ocr_only_searchable_image_count?: number;
   };
 }
 
@@ -80,18 +83,25 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
 
   const active = ['queued', 'running'].includes(data?.job?.status || '');
   const graphId = data?.job?.completed_stages?.graph?.result?.run_id;
+  const imageErrors = data?.job?.stage_progress?.image_index?.error_summary || [];
+  const imageIssue = imageErrors.some(item => item.http_status === 404)
+    ? 'Image descriptions are paused because the vision service returned “not found.” Check its model and service settings, then retry. Text already read from images remains searchable.'
+    : imageErrors.some(item => item.error_category === 'authentication')
+    ? 'Image descriptions need valid provider access. Correct the provider setting, then retry. Extracted text remains available.'
+    : null;
   return <section className="rounded-lg border border-slate-200 bg-white p-3" aria-label="Document preparation">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="text-xs font-bold text-slate-700">Document preparation</h4>
       <button type="button" className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 disabled:opacity-40" disabled={busy || active} onClick={() => void start()}>
-        {busy ? 'Starting…' : data?.job?.status === 'error' ? 'Retry unfinished stages' : data?.job?.status === 'done' ? 'Reprocess source' : 'Process source'}
+        {busy ? 'Starting…' : data?.job?.status === 'error' ? data.job.retryable === false ? 'Retry after correction' : 'Retry unfinished stages' : data?.job?.status === 'done' ? 'Reprocess source' : 'Process source'}
       </button>
     </div>
     {data && <>
       <p className="mt-2 text-xs text-slate-600" role="status">{data.job?.status === 'error' ? 'Needs attention' : STAGES[data.job?.stage || 'queued'] || data.job?.stage}</p>
-      <p className="mt-2 text-xs text-slate-500">Searchable text: {data.coverage.embedded_segment_count}/{data.coverage.eligible_segment_count} · Images: {data.coverage.embedded_image_count}/{data.coverage.eligible_image_count}</p>
+      <p className="mt-2 text-xs text-slate-500">Searchable text: {data.coverage.embedded_segment_count}/{data.coverage.eligible_segment_count} · Images prepared: {data.coverage.embedded_image_count}/{data.coverage.eligible_image_count}</p>
+      {!!data.coverage.ocr_only_searchable_image_count && <p className="mt-1 text-xs text-slate-500">Text from {data.coverage.ocr_only_searchable_image_count} image(s) is searchable while descriptions need attention.</p>}
       {!!data.coverage.skipped_image_count && <p className="mt-1 text-xs text-slate-500">{data.coverage.skipped_image_count} image(s) skipped by the informative-image check.</p>}
-      {data.job?.detail && <p className="mt-2 break-words text-xs text-amber-800">{data.job.detail}</p>}
+      {(imageIssue || data.job?.detail) && <p className="mt-2 break-words text-xs text-amber-800">{imageIssue || data.job?.detail}</p>}
       {graphId && onOpenGraph && <button type="button" onClick={onOpenGraph} className="mt-2 text-xs font-semibold text-blue-700 underline">Open graph draft and evidence</button>}
       <p className="mt-2 text-xs text-slate-400">Text and OCR feed both search and graph drafts. Graph inclusion and publication remain review steps.</p>
     </>}
