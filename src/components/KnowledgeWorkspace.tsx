@@ -63,9 +63,11 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
   const [materialDetail, setMaterialDetail] = useState<Material | null>(null);
   const [documents, setDocuments] = useState<SelectedDocument[]>([]);
   const [title, setTitle] = useState('');
-  const [topic, setTopic] = useState('tapa barkcloth manufacture archaeology');
+  const [topic, setTopic] = useState('documented research evidence');
+  const [ontologyTemplate, setOntologyTemplate] = useState('general');
   const [mode, setMode] = useState('manual');
   const [augment, setAugment] = useState(false);
+  const [discovery, setDiscovery] = useState('crossref');
   const [pageBudget, setPageBudget] = useState(5);
   const [busy, setBusy] = useState(initialMaterial?.materialId ? 'document' : '');
   const [error, setError] = useState('');
@@ -117,7 +119,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     const updated = await api<ResearchRun>(`/research-runs/${id}`, { signal });
     if (selection.current !== id || signal?.aborted) return;
     const files = new Set(updated.artifacts);
-    const graphFile = updated.status === 'released' && updated.release_path ? `${updated.release_path}/graph.json` : 'graph_input.json';
+    const graphFile = updated.status === 'released' && updated.release_path ? `${updated.release_path}/graph.json` : files.has('graph_input.json') ? 'graph_input.json' : 'validated_preview.json';
     const batchFile = files.has('augmented_batches.json') ? 'augmented_batches.json' : 'primary_batches.json';
     const sourceFile = batchFile === 'augmented_batches.json' && files.has('web.json') ? 'web.json' : 'ingest.json';
     const [graph, seeds, batches, inputs, decisions, metrics, ingest] = await Promise.all([
@@ -195,7 +197,8 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
         if (!capabilities.can_write) throw new Error('This document has no saved graph yet. Graph creation is unavailable.');
         const refs = supported.map((file) => ({ material_id: material.id, file_id: file.id }));
         const processingMode = capabilities.extraction.configured ? 'ollama' : 'manual';
-        const payload = { title: material.title, documents: refs, config: { processing: { mode: processingMode }, augmentation: { enabled: false } } };
+        const ontology = await api<OntologySpec>('/research-runs/ontologies/general', { signal });
+        const payload = { title: material.title, documents: refs, config: { ontology, research_topic: 'documented research evidence', processing: { mode: processingMode }, augmentation: { enabled: false } } };
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(payload)));
         const key = 'document-graph-v1:' + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
         if (signal.aborted) return;
@@ -283,15 +286,27 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
   const start = async () => action('start', async () => {
     if (!documents.length) throw new Error('Choose at least one document.');
     idempotency.current ||= crypto.randomUUID();
+    const ontology = await api<OntologySpec>(`/research-runs/ontologies/${ontologyTemplate}`);
     const created = await api<ResearchRun>('/research-runs', { method: 'POST', headers: { 'Idempotency-Key': idempotency.current }, body: JSON.stringify({
       title: title.trim() || documents[0].title,
       documents: documents.map(({ material_id, file_id }) => ({ material_id, file_id })),
-      config: { research_topic: topic, processing: { mode }, augmentation: { enabled: augment, max_pages: pageBudget } },
+      config: { ontology, research_topic: topic, processing: { mode }, augmentation: { enabled: augment, discovery, max_pages: pageBudget } },
     }) });
     selectRun(created.run_id); setRun(created); await refreshRuns();
   });
 
   const resume = async () => action('resume', async () => { if (!runId) return; await api(`/research-runs/${runId}/resume`, { method: 'POST' }); await loadRun(runId); await refreshRuns(); });
+  const retryCurrent = async () => action('retry', async () => {
+    if (!runId) return;
+    const derived = await api<ResearchRun>(`/research-runs/${runId}/retry`, { method: 'POST', body: '{}' });
+    selectRun(derived.run_id); setRun(derived); await refreshRuns();
+    setNotice('A new draft uses the current OCR and extraction methods. The original graph and review history are preserved.');
+  });
+  const discoverSources = async () => action('discover', async () => {
+    if (!runId) return;
+    await api(`/research-runs/${runId}/discover`, { method: 'POST' });
+    await loadRun(runId); await refreshRuns();
+  });
 
   const submitAnnotations = async (batchId: string, response: { entities: Record<string, unknown>[]; assertions: Record<string, unknown>[] }) => {
     if (!runId) return;
@@ -399,6 +414,8 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
               <details className="mt-4 text-sm"><summary className="cursor-pointer text-slate-600">More options</summary>              <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div><label className="mb-1 block text-sm font-medium" htmlFor="kg-project-title">Graph name</label><input id="kg-project-title" className={INPUT} value={title} maxLength={200} placeholder="For example, Barkcloth tools and production" onChange={(event) => { setTitle(event.target.value); idempotency.current = null; }} /></div>
                 <div><label className="mb-1 block text-sm font-medium" htmlFor="kg-topic">Research topic</label><input id="kg-topic" className={INPUT} value={topic} maxLength={500} onChange={(event) => { setTopic(event.target.value); idempotency.current = null; }} /></div>
+                <label>Research model<select className={`${INPUT} mt-1`} value={ontologyTemplate} onChange={(event) => { setOntologyTemplate(event.target.value); idempotency.current = null; }}>{(capabilities?.ontology_templates || [{ id: 'general', label: 'General research' }, { id: 'tapa', label: 'Tapa and archaeology' }]).map((template) => <option value={template.id} key={template.id}>{template.label}</option>)}</select></label>
+                {augment && <label>Web discovery<select className={`${INPUT} mt-1`} value={discovery} onChange={(event) => { setDiscovery(event.target.value); idempotency.current = null; }}><option value="crossref">Find scholarly sources automatically</option><option value="manual">Choose public pages myself</option></select></label>}
               </div>
               <div className="mt-5 flex flex-wrap items-center gap-4"><label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!canWrite || !!busy || capabilities?.collection?.available === false} checked={augment} onChange={(event) => { setAugment(event.target.checked); idempotency.current = null; }} />Enrich with web sources after reading the documents</label></div>
 <div className="mt-3 grid max-w-xl gap-3 sm:grid-cols-2"><label className="block">Concept extraction<select className={`${INPUT} mt-1`} value={mode} onChange={(event) => { setMode(event.target.value); idempotency.current = null; }}><option value="manual">Add concepts myself</option><option value="ollama" disabled={!capabilities?.extraction.configured}>Assisted extraction{!capabilities?.extraction.configured ? ' — unavailable' : ''}</option></select></label><label className="block">Maximum web pages<input className={`${INPUT} mt-1`} type="number" min={1} max={25} value={pageBudget} onChange={(event) => { setPageBudget(Math.max(1, Math.min(25, Number(event.target.value) || 1))); idempotency.current = null; }} /></label></div><p className="mt-2 text-xs text-slate-500">Concepts and relationships are proposed from quotations. You decide what to include in the graph.</p></details>
@@ -410,10 +427,13 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
               {RUNNING.has(run.status) && <p className="mt-3 text-sm text-slate-500">This project runs in the background. You can leave this page and return later.</p>}
               {runDescription(run) && <p className="mt-3 text-sm text-slate-600">{runDescription(run)}</p>}
               {(run.status === 'failed' || run.status === 'queue_failed') && <button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy} onClick={() => void resume()}>Retry processing</button>}
-              {run.status === 'awaiting_readable_documents' && <p className="mt-3 text-sm text-slate-600">The files contain no readable text. Upload an OCR or text version and start a new graph.</p>}
+              {['awaiting_readable_documents', 'awaiting_annotations', 'failed', 'queue_failed'].includes(run.status) && <button className={`${BUTTON} mt-3 ml-2`} disabled={!canWrite || !!busy} onClick={() => void retryCurrent()}>{busy === 'retry' ? 'Starting updated draft…' : 'Retry with current processing'}</button>}
+              {run.status === 'awaiting_readable_documents' && <p className="mt-3 text-sm text-slate-600">Some pages need readable text. Retry with the current OCR methods, or supply a clearer source version. Missing text is not evidence of absence.</p>}
+              {run.status === 'awaiting_frontier' && capabilities?.collection?.discovery_methods?.includes('crossref') && <button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy} onClick={() => void discoverSources()}>{busy === 'discover' ? 'Starting discovery…' : 'Find scholarly sources automatically'}</button>}
             </div>}
             {run && data?.ontology && data.batches.length > 0 && (run.status === 'awaiting_annotations' || run.status === 'failed' || RUNNING.has(run.status)) && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-lg font-semibold">Find concepts in the source text</h3><p className="mt-1 mb-4 text-sm text-slate-500">Keep the original words and their quotation. Add connections when the passage describes them.</p>{canWrite ? <ManualConceptEditor batches={data.batches} ontology={data.ontology} sourceLabels={data.sourceLabels} busy={!!busy || RUNNING.has(run.status)} onSubmit={submitAnnotations} /> : <p className="text-sm text-slate-500">A workspace contributor can add concepts to continue this project.</p>}</div>}
             {run?.status === 'awaiting_frontier' && data && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-lg font-semibold">Enrich document concepts with web sources</h3><p className="mt-1 text-sm text-slate-500">Choose an idea from the documents, then add a relevant public page. Web evidence stays connected to that idea.</p><div className="mt-4 grid gap-4 md:grid-cols-2"><div><label htmlFor="kg-seed-search" className="mb-1 block text-sm font-medium">Document concepts</label><input id="kg-seed-search" className={INPUT} value={seedQuery} placeholder="Find a concept" onChange={(event) => setSeedQuery(event.target.value)} /><div className="mt-2 max-h-60 overflow-y-auto rounded-lg border border-slate-200 p-2">{filteredSeeds.slice(0, 100).map((seed) => <label key={seed.seed_id} className="flex cursor-pointer items-start gap-2 rounded-lg p-2 text-sm hover:bg-slate-50"><input className="mt-1" type="checkbox" checked={chosenSeeds.includes(seed.seed_id)} disabled={!canWrite || !!busy} onChange={(event) => setChosenSeeds((current) => event.target.checked ? [...current, seed.seed_id] : current.filter((id) => id !== seed.seed_id))} /><span>{seed.label}<span className="block text-xs text-slate-400">{seed.entity_type.replace(/([a-z])([A-Z])/g, '$1 $2')}</span></span></label>)}</div>{filteredSeeds.length > 100 && <p className="mt-1 text-xs text-slate-500">Search to narrow these {filteredSeeds.length} concepts.</p>}</div><div><label className="mb-1 block text-sm font-medium" htmlFor="kg-web-url">Relevant web page</label><input id="kg-web-url" className={INPUT} type="url" value={webUrl} placeholder="https://…" onChange={(event) => setWebUrl(event.target.value)} /><button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy || !webUrl || !chosenSeeds.length} onClick={addWebSource}>Add web source</button>{chosenSeeds.length > 0 && <div className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900"><p className="font-semibold">Search ideas</p>{data.seeds.filter((seed) => chosenSeeds.includes(seed.seed_id)).slice(0, 3).map((seed) => <p key={seed.seed_id} className="mt-1 break-words">{seed.queries[0]}</p>)}</div>}<ul className="mt-4 space-y-2">{frontier.map((entry) => <li key={entry.url} className="flex justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm"><span className="break-all">{entry.url}<span className="block text-xs text-slate-500">Linked to {entry.seed_ids.length} document concept(s)</span></span><button className="text-xs text-slate-500" disabled={!!busy} onClick={() => setFrontier((current) => current.filter((item) => item.url !== entry.url))}>Remove</button></li>)}</ul></div></div><button className={`${PRIMARY} mt-4`} disabled={!canWrite || !!busy || !frontier.length || capabilities?.collection?.available === false} onClick={() => void collect()}>{busy === 'collect' ? 'Starting collection…' : frontier.length ? `Read ${frontier.length} web source${frontier.length === 1 ? '' : 's'}` : 'Read web sources'}</button><button className={`${BUTTON} ml-3 mt-4`} disabled={!canWrite || !!busy} onClick={() => void skipEnrichment()}>Continue with documents only</button>{capabilities?.collection && !capabilities.collection.available && <p className="mt-3 text-sm text-amber-800">Web collection is unavailable in this workspace. You can continue with your saved document concepts.</p>}</div>}
+            {displayedGraph?.partial_extraction && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Partial extraction: these candidates passed the evidence checks. {displayedGraph.pending_batch_count || 0} passage batch(es) still need correction. This view cannot be published.</p>}
             {displayedGraph && <GraphExplorer key={runId} graph={displayedGraph || EMPTY_GRAPH} decisions={data?.decisions || []} onReview={review} canReview={canReview} busy={!!busy} onOpenResearchEvidence={onOpenResearchEvidence} />}
             {run?.status === 'awaiting_review' && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Save a graph version</h3><p className="mt-1 text-sm text-slate-500">A preview shows pending items. A published version contains only items you have included, with their source evidence.</p>{capabilities?.can_review ? <div className="mt-4 flex flex-wrap gap-3"><button className={BUTTON} disabled={!!busy} onClick={() => void release(true)}>Create preview</button><button className={PRIMARY} disabled={!!busy || accepted === 0} onClick={() => void release(false)}>Publish reviewed graph</button><span className="self-center text-xs text-slate-500">{accepted} item(s) included</span></div> : <p className="mt-3 text-sm text-slate-500">A workspace reviewer can publish a graph version.</p>}</div>}
             {run?.release_path && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{run.status === 'released' ? 'Published graph' : 'Graph preview'} downloads</h3><div className="mt-3 flex flex-wrap gap-3">{[['graph.json', 'Graph data (JSON)'], ['graph.ttl', 'Graph data (RDF)'], ['manifest.json', 'Source and version manifest']].map(([filename, label]) => <GraphDownload key={filename} className={BUTTON} filename={filename} url={`${API_BASE_URL}/research-runs/${run.run_id}/artifacts/${run.release_path}/${filename}`}>{label}</GraphDownload>)}</div></div>}

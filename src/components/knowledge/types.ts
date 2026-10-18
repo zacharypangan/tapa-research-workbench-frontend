@@ -32,13 +32,15 @@ export interface Capabilities {
   can_review: boolean;
   extraction: {
     configured: boolean;
+    processing_version?: string;
     default_mode: string;
     modes: Array<{ id: string; label: string; available: boolean }>;
   };
   supported_formats: string[];
   limits: { max_documents: number; max_pages: number };
   statuses: Record<string, string>;
-  collection?: { available: boolean; engine: string; label: string; detail: string };
+  collection?: { available: boolean; engine: string; label: string; detail: string; discovery_methods?: string[] };
+  ontology_templates?: Array<{ id: string; label: string }>;
 }
 
 export interface GraphSource {
@@ -107,6 +109,8 @@ export interface ReviewDecision {
 }
 
 export interface GraphData {
+  partial_extraction?: boolean;
+  pending_batch_count?: number;
   entities: GraphEntity[];
   evidence: GraphEvidence[];
   sources: GraphSource[];

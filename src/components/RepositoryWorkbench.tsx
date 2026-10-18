@@ -34,6 +34,7 @@ import {
 } from './repository/formatters';
 import { buildPrintableReportHtml } from './repository/printableReport';
 import { SearchReportModal } from './repository/SearchReportModal';
+import { DocumentProcessingStatus } from './repository/DocumentProcessingStatus';
 import { WorkbenchHeader } from './WorkbenchHeader';
 import type {
   AIEvidenceReport,
@@ -2223,6 +2224,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                   </div>
 
                   <div className="space-y-3 p-4">
+                    <DocumentProcessingStatus materialId={selectedMaterial.id} request={repositoryFetch} onComplete={() => { void loadMaterials(); }} onOpenGraph={() => onOpenKnowledgeGraph?.(selectedMaterial.id)} />
                       <div className="grid gap-2 text-[12px] grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))]">
                       <div className="rounded-lg bg-slate-50 px-2 py-2">
                         <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Text Segments</div>
