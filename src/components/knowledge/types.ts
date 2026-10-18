@@ -1,4 +1,8 @@
 export interface ResearchRun {
+  has_saved_candidates?: boolean;
+  max_auto_batches?: number | null;
+  automatic_batch_budget_reached?: boolean;
+  deferred_batch_ids?: string[];
   run_id: string;
   title?: string;
   status: string;
@@ -37,6 +41,7 @@ export interface Capabilities {
     modes: Array<{ id: string; label: string; available: boolean }>;
   };
   supported_formats: string[];
+  registered_extraction?: { available: boolean; endpoint: string };
   limits: { max_documents: number; max_pages: number };
   statuses: Record<string, string>;
   collection?: { available: boolean; engine: string; label: string; detail: string; discovery_methods?: string[] };
