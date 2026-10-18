@@ -32,4 +32,12 @@ Port checks on 2026-10-17: the production build and focused graph/App/type lint 
 
 ## Document shortcut
 
-Choose **View graph** on a Sources row or its Metadata panel. The graph page opens that document’s latest graph, or starts source-only entity extraction when none exists. The `material` and `graph` URL parameters preserve the document and selected graph on refresh. Unsupported files and evidence-check failures explain the next step. Both pages share the same Workbench header; graph filters, entity lists and additional creation options remain available in collapsed panels.
+Choose **View graph** on a Sources row or its Metadata panel. The graph page opens that document’s latest graph, or starts source-only entity extraction when none exists. The `material` and `graph` URL parameters preserve the document and selected graph on refresh. Unsupported files and evidence-check failures explain the next step. Both pages share the same Workbench header; graph filters and additional creation options remain available in collapsed panels, while the entity list is visible initially.
+
+## Entity details and insights
+
+On desktop, the graph remains beside a persistent detail panel. The first entity is selected automatically; select another entity or connection to inspect its original labels, source, contextual scope, incoming/outgoing relationships, exact quotations and inclusion decisions. The searchable list is open initially. Narrow screens stack the graph and detail panel.
+
+Graph insights show entity types, concepts with/without recorded connections, document–web connections and review totals. Counts describe the current document/graph view before search and filters, including pending and excluded candidates. They are structural diagnostics, not extraction-completeness or scientific-validity scores. Most-connected and unlinked concepts can be opened directly from the insights panel.
+
+The backend's `docs/service-pipeline-review.md` documents the service audit and proposed shared processing pipeline, including the current OCR/index/graph handoff gaps. Those architecture proposals are separate from this UI change.

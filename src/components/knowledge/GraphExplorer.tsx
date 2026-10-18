@@ -148,6 +148,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [connectionPage, setConnectionPage] = useState(0);
   const [rationale, setRationale] = useState('');
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -189,7 +190,40 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
     return items;
   }, [graph.entities, graph.assertions, graph.alignments, entities]);
   const candidateMap = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate])), [candidates]);
-  const selected = selectedId ? candidateMap.get(selectedId) : undefined;
+  // Keep the detail panel useful on first load and when switching graphs.
+  const hasActiveFilters = Boolean(query.trim()) || category !== 'all' || sourceFilter !== 'all' || statusFilter !== 'all';
+  const selected = candidateMap.get(selectedId || '') || (!hasActiveFilters ? candidates.find(candidate => candidate.kind === 'concept') : undefined);
+  const insights = useMemo(() => {
+    const connected = new Set<string>();
+    const degree = new Map<string, number>();
+    let documentWebLinks = 0;
+    for (const candidate of candidates) {
+      if (!candidate.statement) continue;
+      for (const id of candidate.entityIds) if (entities.has(id)) {
+        connected.add(id);
+        degree.set(id, (degree.get(id) || 0) + 1);
+      }
+      const subject = entities.get(candidate.statement.subject_id);
+      const object = entities.get(candidate.statement.object_id || '');
+      if (subject && object && origin(sources.get(subject.source_id)) !== origin(sources.get(object.source_id))) documentWebLinks++;
+    }
+    const types = new Map<string, number>();
+    for (const entity of graph.entities) types.set(entity.entity_type, (types.get(entity.entity_type) || 0) + 1);
+    const reviewCounts = { pending: 0, included: 0, excluded: 0 };
+    for (const candidate of candidates) {
+      const decision = activeDecisions.get(candidate.id)?.decision;
+      reviewCounts[decision === 'accept' ? 'included' : decision === 'reject' ? 'excluded' : 'pending']++;
+    }
+    return {
+      connected: connected.size,
+      isolated: graph.entities.filter(entity => !connected.has(entity.entity_id)),
+      documentWebLinks,
+      types: [...types].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+      mostConnected: [...degree].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5),
+      reviewCounts,
+    };
+  }, [candidates, entities, sources, graph.entities, activeDecisions]);
+  const relatedConnections = selected?.entity ? candidates.filter(candidate => candidate.statement && candidate.entityIds.includes(selected.id)) : [];
   const filtered = useMemo(() => {
     const search = query.trim().toLocaleLowerCase();
     return candidates.filter(candidate => {
@@ -205,11 +239,16 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       return searchable.includes(search);
     });
   }, [candidates, query, category, sourceFilter, statusFilter, sources, evidence, activeDecisions]);
+  const selectionOutsideFilters = Boolean(selected && !filtered.some(candidate => candidate.id === selected.id));
+  const connectionPages = Math.max(1, Math.ceil(relatedConnections.length / PAGE_SIZE));
+  const currentConnectionPage = Math.min(connectionPage, connectionPages - 1);
   useEffect(() => { setPage(0); }, [query, category, sourceFilter, statusFilter]);
-  useEffect(() => { setRationale(''); setReviewError(null); }, [selectedId]);
+  useEffect(() => { setRationale(''); setReviewError(null); setConnectionPage(0); }, [selected?.id]);
 
   const network = useMemo(() => {
-    const focusedIds = new Set(selected?.entityIds || []);
+    // A retained inspector selection must not inject non-matching concepts into
+    // the filtered network or its matching totals.
+    const focusedIds = new Set(!selectionOutsideFilters ? selected?.entityIds || [] : []);
     const relatedIds = new Set(filtered.flatMap(candidate => candidate.entityIds));
     for (const id of focusedIds) relatedIds.add(id);
     const connections = filtered.filter(candidate => candidate.statement?.object_id);
@@ -246,7 +285,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       geometries.set(candidate.id, connectionGeometry(start, end, anchor));
     }
     return { nodes, positions, edges, geometries, total: pool.length, totalConnections: matchingEdges.length, height };
-  }, [filtered, selected, graph.entities, sources]);
+  }, [filtered, selected, selectionOutsideFilters, graph.entities, sources]);
   const selectedEvidence = selected?.evidenceIds.map(id => evidence.get(id)).filter((item): item is GraphEvidence => Boolean(item)) || [];
   const dependencies = selected?.statement ? selected.entityIds.map(id => entities.get(id)).filter((item): item is GraphEntity => Boolean(item)) : [];
   const excludedDependencies = dependencies.filter(entity => status(entity.entity_id) === 'excluded');
@@ -271,7 +310,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
     <div className="research-graph-explorer">
       <div className="rge-introduction">
         <h3>Entities and connections</h3>
-        <p>Select an entity or connection to read its supporting quotations.</p>
+        <p>Select an entity or connection to inspect its details, linked concepts and supporting quotations in the side panel.</p>
         <div className="rge-metrics" aria-label="Graph totals">
           <span><strong>{graph.sources.length.toLocaleString()}</strong> sources</span>
           <span><strong>{graph.entities.length.toLocaleString()}</strong> concepts</span>
@@ -290,17 +329,20 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
           </div>
         </details>
       </div>
+      <div className="rge-workspace">
+      <section className="rge-overview" aria-label="Graph overview and insights">
+      <div className="rge-network-panel">
       <div className="rge-network-heading">
         <h4>Connection overview</h4>
         <div className="rge-legend"><span className="rge-primary-dot">Document concept</span><span className="rge-web-dot">Web concept</span><span className="rge-solid-line">Reported relationship</span><span className="rge-dashed-line">Proposed comparison</span></div>
       </div>
       {network.nodes.length ? (
-        <div className="rge-network-scroll">
+        <div className="rge-network-scroll" tabIndex={0} role="region" aria-label="Graph canvas. Scroll horizontally to see all concepts.">
           <svg className="rge-network" viewBox={`0 0 1000 ${network.height}`} role="group" aria-label="Interactive graph overview. Choose a concept or connection to inspect its evidence.">
             <defs><marker id={arrowId} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto-start-reverse"><path d="M 0 0 L 7 3.5 L 0 7 z" fill="#64748b" /></marker></defs>
             <text x="20" y="28" className="rge-lane-label">DOCUMENTS</text><text x="526" y="28" className="rge-lane-label">WEB SOURCES</text>
             <line x1="500" y1="12" x2="500" y2={network.height - 10} stroke="#e2e8f0" />
-            {network.edges.map(candidate => <g key={candidate.id} onClick={() => setSelectedId(candidate.id)} className={`rge-edge ${candidate.kind === 'comparison' ? 'rge-edge-comparison' : ''} ${status(candidate.id) === 'excluded' ? 'rge-edge-excluded' : ''} ${selectedId === candidate.id ? 'rge-edge-selected' : ''}`}><title>{candidate.title}</title><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-hit" /><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-visible" markerEnd={candidate.kind === 'relationship' ? `url(#${arrowId})` : undefined} /></g>)}
+            {network.edges.map(candidate => <g key={candidate.id} onClick={() => setSelectedId(candidate.id)} className={`rge-edge ${candidate.kind === 'comparison' ? 'rge-edge-comparison' : ''} ${status(candidate.id) === 'excluded' ? 'rge-edge-excluded' : ''} ${selected?.id === candidate.id ? 'rge-edge-selected' : ''}`}><title>{candidate.title}</title><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-hit" /><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-visible" markerEnd={candidate.kind === 'relationship' ? `url(#${arrowId})` : undefined} /></g>)}
             {network.nodes.map(entity => {
               const point = network.positions.get(entity.entity_id)!;
               const selectedNode = selected?.entityIds.includes(entity.entity_id);
@@ -308,27 +350,46 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             })}
             {network.edges.map(candidate => {
               const anchor = network.geometries.get(candidate.id)!.anchor;
-              return <circle key={candidate.id} cx={anchor.x} cy={anchor.y} r="7" role="button" tabIndex={0} aria-label={`${kindLabel[candidate.kind]}: ${candidate.title}`} onClick={() => setSelectedId(candidate.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(candidate.id); } }} className={`rge-connection-target ${candidate.kind === 'comparison' ? 'rge-connection-target-comparison' : ''} ${selectedId === candidate.id ? 'rge-connection-target-selected' : ''}`}><title>{`${kindLabel[candidate.kind]}: ${candidate.title}`}</title></circle>;
+              return <circle key={candidate.id} cx={anchor.x} cy={anchor.y} r="7" role="button" tabIndex={0} aria-label={`${kindLabel[candidate.kind]}: ${candidate.title}`} onClick={() => setSelectedId(candidate.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(candidate.id); } }} className={`rge-connection-target ${candidate.kind === 'comparison' ? 'rge-connection-target-comparison' : ''} ${selected?.id === candidate.id ? 'rge-connection-target-selected' : ''}`}><title>{`${kindLabel[candidate.kind]}: ${candidate.title}`}</title></circle>;
             })}
           </svg>
         </div>
       ) : <p className="rge-empty">No concepts match these filters.</p>}
-      <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
-      <div className="rge-review-grid">
-        <details className="rge-candidate-list" aria-label="Searchable graph items">
+      <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Scroll the graph horizontally when needed. Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
+      </div>
+      <section className="rge-insights" aria-labelledby={`${controlId}-insights`}>
+        <h4 id={`${controlId}-insights`}>Graph insights</h4>
+        <p className="rge-subtle">Counts cover this graph view before search and filters, including pending and excluded items. They describe recorded structure, not extraction completeness.</p>
+        <dl className="rge-insight-totals">
+          <div><dt>Concepts with connections</dt><dd>{insights.connected.toLocaleString()}</dd></div>
+          <div><dt>Concepts without connections</dt><dd>{insights.isolated.length.toLocaleString()}</dd></div>
+          <div><dt>Document–web connections</dt><dd>{insights.documentWebLinks.toLocaleString()}</dd></div>
+        </dl>
+        <div className="rge-type-counts" aria-label="Entity types">{insights.types.map(([type, count]) => <span key={type}>{humanize(type)} <strong>{count.toLocaleString()}</strong></span>)}</div>
+        <p className="rge-insight-review"><strong>Review:</strong> {insights.reviewCounts.pending.toLocaleString()} pending · {insights.reviewCounts.included.toLocaleString()} included · {insights.reviewCounts.excluded.toLocaleString()} excluded. Inclusion is a curation decision.</p>
+        {insights.mostConnected.length > 0 && <div className="rge-insight-links"><strong>Most connected concepts</strong><div>{insights.mostConnected.map(([id, count]) => <button type="button" key={id} onClick={() => setSelectedId(id)}>{label(entities.get(id))} <span>{count}</span></button>)}</div></div>}
+        {insights.isolated.length > 0 && <div className="rge-insight-links"><strong>Without recorded connections{insights.isolated.length > 5 ? ' · first 5' : ''}</strong><div>{insights.isolated.slice(0, 5).map(entity => <button type="button" key={entity.entity_id} onClick={() => setSelectedId(entity.entity_id)}>{label(entity)}</button>)}</div><p className="rge-subtle">Inspect their quotations before proposing a relationship. A shared label alone is not a link.</p></div>}
+      </section>
+        <details className="rge-candidate-list" aria-label="Searchable graph items" open>
           <summary>Browse entities and connections <span>({filtered.length.toLocaleString()} items)</span></summary>
           {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(candidate => {
             const blocked = candidate.statement && candidate.entityIds.some(id => status(id) === 'excluded');
-            return <button key={candidate.id} type="button" className={`rge-candidate ${selectedId === candidate.id ? 'rge-candidate-selected' : ''}`} onClick={() => setSelectedId(candidate.id)} aria-pressed={selectedId === candidate.id}><span className="rge-candidate-kind">{kindLabel[candidate.kind]}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></span><strong>{candidate.title}</strong><span className="rge-candidate-source">{candidate.sourceIds.map(id => sources.get(id)?.title || 'Source').join(' · ')}</span>{blocked && <span className="rge-blocked">Excluded from release: a required concept is excluded.</span>}</button>;
+            return <button key={candidate.id} type="button" className={`rge-candidate ${selected?.id === candidate.id ? 'rge-candidate-selected' : ''}`} onClick={() => setSelectedId(candidate.id)} aria-pressed={selected?.id === candidate.id}><span className="rge-candidate-kind">{kindLabel[candidate.kind]}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></span><strong>{candidate.title}</strong><span className="rge-candidate-source">{candidate.sourceIds.map(id => sources.get(id)?.title || 'Source').join(' · ')}</span>{blocked && <span className="rge-blocked">Excluded from release: a required concept is excluded.</span>}</button>;
           })}
           {!filtered.length && <p className="rge-empty">No matching items. Try a broader search or another filter.</p>}
           {totalPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} of {totalPages}</span><button type="button" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</button></div>}
         </details>
+      </section>
         <aside className="rge-inspector" aria-label="Selected item and source evidence">
+          <h4 className="rge-inspector-heading">Entity and connection details</h4>
           {!selected ? <div className="rge-empty-inspector"><h4>Start with a concept or connection</h4><p>Choose an item above or in the list to see its source quotations, context and review decisions.</p><p>Including an item approves its place in this graph. Specialist verification remains a separate research step.</p></div> : <>
+            {selectionOutsideFilters && <p className="rge-subtle" role="status">This selected item is outside the current search or filters. Its details stay open; it is not added to the matching graph results.</p>}
             <div className="rge-inspector-top"><span>{kindLabel[selected.kind]}</span><span className={`rge-status rge-status-${status(selected.id)}`}>{statusLabel[status(selected.id)]}</span></div>
             <h4>{selected.title}</h4>
-            {selected.entity && <><p className="rge-subtle">{humanize(selected.entity.entity_type)} · {origin(sources.get(selected.entity.source_id)) === 'web' ? 'Web source account' : 'Document source account'}</p>{selected.entity.label_en && selected.entity.label_en !== selected.entity.label_original && <p className="rge-translation">English label: proposed translation awaiting review.<br />Original label: <span>{selected.entity.label_original}</span></p>}</>}
+            {selected.entity && <><p className="rge-subtle">{humanize(selected.entity.entity_type)} · {origin(sources.get(selected.entity.source_id)) === 'web' ? 'Web source account' : 'Document source account'}</p>{selected.entity.label_en && selected.entity.label_en !== selected.entity.label_original && <p className="rge-translation">English label: proposed translation awaiting review.<br />Original label: <span>{selected.entity.label_original}</span></p>}
+              <dl className="rge-context"><dt>Source</dt><dd>{sources.get(selected.entity.source_id)?.title || selected.entity.source_id}</dd>{Object.entries(selected.entity.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
+              <div className="rge-related"><h5>Connections <span>({relatedConnections.length.toLocaleString()})</span></h5>{relatedConnections.length ? <><div className="rge-related-items">{relatedConnections.slice(currentConnectionPage * PAGE_SIZE, (currentConnectionPage + 1) * PAGE_SIZE).map(candidate => <button type="button" key={candidate.id} onClick={() => setSelectedId(candidate.id)}><span>{candidate.kind === 'comparison' ? 'Proposed comparison' : candidate.statement?.subject_id === selected.id ? 'Outgoing' : candidate.statement?.object_id === selected.id ? 'Incoming' : 'Context'}</span>{candidate.title}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></button>)}</div>{connectionPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentConnectionPage === 0} onClick={() => setConnectionPage(currentConnectionPage - 1)}>Previous</button><span>Page {currentConnectionPage + 1} of {connectionPages}</span><button type="button" disabled={currentConnectionPage >= connectionPages - 1} onClick={() => setConnectionPage(currentConnectionPage + 1)}>Next</button></div>}</> : <p className="rge-subtle">No recorded relationship or comparison refers to this concept in the current graph view.</p>}</div>
+            </>}
             {selected.statement && <>
               <dl className="rge-context"><dt>Meaning</dt><dd>{selected.kind === 'comparison' ? 'A possible correspondence between two source accounts; the concepts remain separate.' : humanize(selected.statement.epistemic_kind || 'source_report')}</dd><dt>Statement</dt><dd>{selected.kind === 'comparison' ? 'Proposed comparison' : selected.statement.polarity === 'negative' ? 'Negative claim' : selected.statement.polarity === 'uncertain' ? 'Uncertain claim' : 'Affirmative claim'}</dd>{Object.entries(selected.statement.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
               {selected.statement.rationale && <p className="rge-rationale">{selected.statement.rationale}</p>}
