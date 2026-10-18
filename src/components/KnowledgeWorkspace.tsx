@@ -181,6 +181,8 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     if (!documentId || !capabilities) return;
     const controller = new AbortController();
     const signal = controller.signal;
+    let waitingForPreparation = false;
+    let preparationTimer: number | undefined;
     void (async () => {
       try {
         const [material, saved] = await Promise.all([
@@ -200,13 +202,38 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
         selected ||= saved.items[0];
         if (signal.aborted) return;
         if (selected) {
-          selection.current = selected.run_id; setRunId(selected.run_id);
+          selection.current = selected.run_id; setRunId(selected.run_id); setNotice('');
           return;
         }
         const supported = (material.files || []).filter((file) => FORMAT.test(file.original_filename));
         if (!supported.length) throw new Error('This document needs a PDF, Word, text, Markdown or JSON file before a graph can be created.');
         if (supported.length > 20) throw new Error('This source has more than 20 supported files. Start a new graph and choose the files to include.');
         if (!capabilities.can_write) throw new Error('This document has no saved graph yet. Graph creation is unavailable.');
+        if (capabilities.extraction.processing_version) {
+          // Reuse the upload worker's graph. Starting a separate browser-owned
+          // run here races extraction and duplicates paid provider work.
+          type PreparationJob = { status: string; stages: string[]; completed_stages?: { graph?: { result?: { run_id?: string } } } };
+          const preparation = await api<{ job: PreparationJob | null }>(`/repository/materials/${encodeURIComponent(documentId)}/processing`, { signal });
+          const job = preparation.job?.stages.includes('graph') ? preparation.job : await api<PreparationJob>(
+            `/repository/materials/${encodeURIComponent(documentId)}/process`, { method: 'POST', signal, body: '{}' });
+          const preparedId = job.completed_stages?.graph?.result?.run_id;
+          if (preparedId) {
+            const prepared = await api<ResearchRun>(`/research-runs/${preparedId}`, { signal });
+            if (signal.aborted) return;
+            selection.current = prepared.run_id; setRunId(prepared.run_id); setRun(prepared); setNotice('');
+            setRuns((current) => [prepared, ...current.filter((item) => item.run_id !== prepared.run_id)]);
+            return;
+          }
+          if (['queued', 'running', 'superseded'].includes(job.status)) {
+            if (signal.aborted) return;
+            waitingForPreparation = true;
+            setBusy('document');
+            setNotice('Reading this source before opening its graph. Saved processing progress will continue if you leave this page.');
+            preparationTimer = window.setTimeout(() => setDocumentRetry((value) => value + 1), 2500);
+            return;
+          }
+          throw new Error('Source preparation needs attention. Return to the document and retry its unfinished stages.');
+        }
         const refs = supported.map((file) => ({ material_id: material.id, file_id: file.id }));
         const processingMode = capabilities.extraction.configured ? 'ollama' : 'manual';
         const ontology = await api<OntologySpec>('/research-runs/ontologies/general', { signal });
@@ -224,10 +251,10 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
       } catch (cause) {
         if (!signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not open the document graph.');
       } finally {
-        if (!signal.aborted) setBusy('');
+        if (!signal.aborted && !waitingForPreparation) setBusy('');
       }
     })();
-    return () => controller.abort();
+    return () => { controller.abort(); window.clearTimeout(preparationTimer); };
   }, [api, documentId, capabilities, documentRetry]);
 
   useEffect(() => {
