@@ -166,6 +166,7 @@ export interface SearchReport {
 }
 
 export interface AIStatus {
+  keyword_review_available?: boolean;
   provider_configured: boolean;
   embedding_model?: string;
   chat_model?: string;
@@ -190,6 +191,7 @@ export interface SemanticResult {
   page_index: number;
   content_text: string;
   score: number;
+  keyword_rank_score?: number | null;
   semantic_score?: number;
   retrieval_basis?: string;
   sense?: string;

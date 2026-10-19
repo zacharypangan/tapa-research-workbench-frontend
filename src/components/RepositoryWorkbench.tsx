@@ -58,6 +58,9 @@ const WORKFLOW_STATUS_ORDER = [
   'needs_review',
 ];
 
+const evidenceMatchLabel = (item: { score: number; keyword_rank_score?: number | null }) =>
+  item.keyword_rank_score != null ? 'Keyword match' : `${(item.score * 100).toFixed(1)} match`;
+
 export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal, headerNavigation, evidenceNavigation, onOpenKnowledgeGraph }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -193,7 +196,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   const embeddingAssistantReady = hasExplicitEmbeddingStatus
     ? Boolean((aiStatus as any)?.embedding_configured)
     : Boolean(aiStatus?.provider_configured);
-  const evidenceAssistantReady = Boolean(chatAssistantReady && embeddingAssistantReady);
+  const evidenceAssistantReady = Boolean(chatAssistantReady && (embeddingAssistantReady || aiStatus?.keyword_review_available));
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
   const activeCitedQuestion = citedQuestion.trim() || fullTextQuery.trim();
 
@@ -1075,7 +1078,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
             ${passage.material_year ? ` · ${escapeHtml(passage.material_year)}` : ''}
             · ${escapeHtml(passage.page_ref)}
             · ${escapeHtml(passage.source_locator)}
-            · ${(passage.score * 100).toFixed(1)} match
+            · ${evidenceMatchLabel(passage)}
           </p>
           ${printableEvidenceMeta(passage)}
           ${printableWordlistRows(passage.wordlist_rows)}
@@ -1135,7 +1138,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
       passage.material_year || '',
       passage.page_ref,
       passage.source_locator,
-      `${(passage.score * 100).toFixed(1)}%`,
+      evidenceMatchLabel(passage),
       passage.research_relevance || '',
       passage.evidence_type || '',
       getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
@@ -1180,7 +1183,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
           </p>
           ${theme.passages
             .map((passage) => `
-              <h3>${escapeHtml(passage.page_ref)} · ${(passage.score * 100).toFixed(1)} match</h3>
+              <h3>${escapeHtml(passage.page_ref)} · ${evidenceMatchLabel(passage)}</h3>
               ${printableEvidenceMeta(passage)}
               ${printableWordlistRows(passage.wordlist_rows)}
               <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
@@ -1226,7 +1229,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
         passageIndex + 1,
         passage.page_ref,
         '',
-        `${(passage.score * 100).toFixed(1)}%`,
+        evidenceMatchLabel(passage),
         passage.research_relevance || '',
         passage.evidence_type || '',
         getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
@@ -1527,6 +1530,8 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                 </div>
               </div>
 
+              {chatAssistantReady && !embeddingAssistantReady && aiStatus?.keyword_review_available && <p role="status" className="mt-3 text-xs text-amber-800">Semantic search is unavailable. Assisted review uses keyword matching in the source text; image similarity is unavailable. Try exact source terms, including the original language.</p>}
+
               {showProcessReferencesPanel && (
                 <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1599,7 +1604,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                           {result.material_title}
                         </div>
                         <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                          {(result.score * 100).toFixed(1)} match
+                          {evidenceMatchLabel(result)}
                         </div>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-400">
@@ -1803,7 +1808,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                             }`}
                           >
                             <div className="mb-1 font-bold text-slate-400">
-                              {passage.page_ref} · {(passage.score * 100).toFixed(1)} match
+                              {passage.page_ref} · {evidenceMatchLabel(passage)}
                             </div>
                             <div className="mb-2 flex flex-wrap gap-1">
                               {passage.research_relevance && (
