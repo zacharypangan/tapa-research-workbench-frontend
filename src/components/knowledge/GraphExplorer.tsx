@@ -66,6 +66,7 @@ function locatorLabel(evidence: GraphEvidence): string {
   const parts: string[] = [];
   const pageNumber = locator.pdf_page ?? locator.page ?? locator.page_number;
   if (pageNumber !== undefined) parts.push(`Page ${pageNumber}`);
+  else if (locator.page_ref) parts.push(String(locator.page_ref).replace(/^page:/i, 'Page '));
   const pointer = locator.json_pointer ?? locator.pointer;
   if (pointer !== undefined) parts.push(`JSON field ${pointer || '(root)'}`);
   const paragraph = locator.paragraph ?? locator.paragraph_number;
@@ -98,8 +99,8 @@ function evidenceTarget(source: GraphSource | undefined, evidence: GraphEvidence
   const locator = typeof evidence.locator === 'object' ? evidence.locator : {};
   return {
     material_id: match[1], material_title: source?.title, view: 'source',
-    page_ref: (locator.pdf_page ?? locator.page ?? locator.page_number) === undefined ? null : String(locator.pdf_page ?? locator.page ?? locator.page_number),
-    source_locator: locatorLabel(evidence), snippet: evidence.text,
+    page_ref: locator.page_ref ? String(locator.page_ref) : (locator.pdf_page ?? locator.page ?? locator.page_number) === undefined ? null : String(locator.pdf_page ?? locator.page ?? locator.page_number),
+    source_locator: locator.source_locator ? String(locator.source_locator) : locatorLabel(evidence), snippet: evidence.text,
   };
 }
 
