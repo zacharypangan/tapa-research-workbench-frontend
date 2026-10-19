@@ -1,6 +1,8 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import type { ResearchEvidenceNavigation } from '../repository/types';
 import type { GraphData, GraphEntity, GraphEvidence, GraphSource, GraphStatement, ReviewDecision } from './types';
+import { GraphNetwork } from './GraphNetwork';
+import type { NetworkConnection } from './graphNetworkLayout';
 import './GraphExplorer.css';
 
 interface GraphExplorerProps {
@@ -25,16 +27,10 @@ interface Candidate {
   entityIds: string[];
   sourceIds: string[];
 }
-interface GraphPoint { x: number; y: number }
-interface ConnectionGeometry { path: string; anchor: GraphPoint }
-
-const MAX_NODES = 80;
-const MAX_CONNECTIONS = 160;
 const PAGE_SIZE = 35;
 const CONTEXT_KEYS = ['place_id', 'time_id', 'scheme_id', 'production_case_id', 'case_id'];
 const humanize = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
 const label = (entity?: GraphEntity) => entity?.label_en || entity?.label_original || 'Unknown concept';
-const short = (value: string, length = 23) => value.length > length ? `${value.slice(0, length - 1)}…` : value;
 const kindLabel: Record<Kind, string> = { concept: 'Concept', relationship: 'Reported relationship', comparison: 'Proposed comparison', inference: 'Inferred connection' };
 const statusLabel: Record<Status, string> = { pending: 'Pending', included: 'Included', excluded: 'Excluded' };
 
@@ -104,45 +100,8 @@ function evidenceTarget(source: GraphSource | undefined, evidence: GraphEvidence
   };
 }
 
-function connectionGeometry(start: GraphPoint, end: GraphPoint, anchor: GraphPoint): ConnectionGeometry {
-  if (start.x === end.x && start.y === end.y) {
-    const shift = (anchor.x - start.x) * 4 / 3;
-    const top = start.y + (anchor.y - start.y) * 4 / 3;
-    return { anchor, path: `M ${start.x + 54} ${start.y} C ${start.x + 90 + shift} ${top} ${start.x - 90 + shift} ${top} ${start.x - 54} ${start.y}` };
-  }
-  const initialControl = { x: 2 * anchor.x - (start.x + end.x) / 2, y: 2 * anchor.y - (start.y + end.y) / 2 };
-  const boundary = (point: GraphPoint) => {
-    const dx = initialControl.x - point.x;
-    const dy = initialControl.y - point.y;
-    const scale = Math.min(dx ? 54 / Math.abs(dx) : Infinity, dy ? 23 / Math.abs(dy) : Infinity);
-    return Number.isFinite(scale) ? { x: point.x + dx * scale, y: point.y + dy * scale } : point;
-  };
-  const first = boundary(start);
-  const last = boundary(end);
-  // The quadratic curve passes exactly through its selectable midpoint.
-  const control = { x: 2 * anchor.x - (first.x + last.x) / 2, y: 2 * anchor.y - (first.y + last.y) / 2 };
-  return { anchor, path: `M ${first.x} ${first.y} Q ${control.x} ${control.y} ${last.x} ${last.y}` };
-}
-
-function findConnectionAnchor(base: GraphPoint, occupied: GraphPoint[], nodes: GraphPoint[], height: number): GraphPoint {
-  // Reserve separate targets outside concept cards; crossing lines can still be
-  // selected without relying on a curved SVG group's bounding-box centre.
-  for (let ring = 0; ring < 65; ring++) for (let dx = -ring; dx <= ring; dx++) {
-    const dy = ring - Math.abs(dx);
-    for (const signedY of dy ? [-dy, dy] : [0]) {
-      const point = { x: base.x + dx * 18, y: base.y + signedY * 18 };
-      if (point.x < 16 || point.x > 984 || point.y < 45 || point.y > height - 15) continue;
-      if (occupied.some(other => Math.hypot(point.x - other.x, point.y - other.y) < 22)) continue;
-      if (nodes.some(node => Math.abs(point.x - node.x) < 62 && Math.abs(point.y - node.y) < 29)) continue;
-      return point;
-    }
-  }
-  return base;
-}
-
 export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onOpenResearchEvidence }: GraphExplorerProps) {
   const controlId = useId().replace(/:/g, '');
-  const arrowId = `${controlId}-arrow`;
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Kind | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<Origin | 'all'>('all');
@@ -177,7 +136,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       id: entity.entity_id, kind: 'concept', title: label(entity), entity,
       evidenceIds: entity.evidence_ids, entityIds: [entity.entity_id], sourceIds: [entity.source_id],
     }));
-    for (const [kind, rows] of [['relationship', graph.assertions], ['comparison', graph.alignments], ['inference', graph.inferences || []]] as const) {
+    for (const [kind, rows] of [['relationship', [...graph.assertions, ...(graph.supported_relationships || [])]], ['comparison', graph.alignments], ['inference', graph.inferences || []]] as const) {
       for (const statement of rows) {
         const id = statement.assertion_id || statement.alignment_id || statement.inference_id || statement.candidate_id;
         if (!id) continue;
@@ -185,30 +144,46 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
         const entityIds = [...new Set([statement.subject_id, ...(statement.object_id ? [statement.object_id] : []), ...(statement.via_entity_ids || []), ...contextIds])];
         const sourceIds = [...new Set([...(statement.source_id ? [statement.source_id] : []), ...entityIds.map(entityId => entities.get(entityId)?.source_id).filter((item): item is string => Boolean(item))])];
         const end = statement.object_id ? label(entities.get(statement.object_id)) : valueLabel(statement.value, entities);
-        const relation = kind === 'comparison' ? 'may correspond to' : ({ possibly_same_concept: 'may refer to the same concept as', shares_reported_connection: 'shares a reported connection with', shares_quoted_context: 'appears in quoted context with' } as Record<string, string>)[statement.predicate] || humanize(statement.predicate);
+        const relation = kind === 'comparison' ? 'may correspond to' : ({ possibly_same_concept: 'may refer to the same concept as', aligns_reported_concept_with: 'may correspond to', has_related_concept_context: 'has related name context with', shares_reported_connection: 'shares a reported connection with', shares_quoted_context: 'appears in quoted context with' } as Record<string, string>)[statement.predicate] || humanize(statement.predicate);
         const qualification = kind === 'relationship' && statement.polarity === 'negative' ? 'Negative claim: ' : kind === 'relationship' && statement.polarity === 'uncertain' ? 'Uncertain claim: ' : '';
         items.push({ id, kind, title: `${qualification}${label(entities.get(statement.subject_id))} → ${relation} → ${end}`, statement, evidenceIds: statement.evidence_ids, entityIds, sourceIds });
       }
     }
     return items;
-  }, [graph.entities, graph.assertions, graph.alignments, graph.inferences, entities]);
+  }, [graph.entities, graph.assertions, graph.supported_relationships, graph.alignments, graph.inferences, entities]);
   const candidateMap = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate])), [candidates]);
   // Keep the detail panel useful on first load and when switching graphs.
   const hasActiveFilters = Boolean(query.trim()) || category !== 'all' || sourceFilter !== 'all' || documentSourceFilter !== 'all' || statusFilter !== 'all';
   const selected = candidateMap.get(selectedId || '') || (!hasActiveFilters ? candidates.find(candidate => candidate.kind === 'concept') : undefined);
   const insights = useMemo(() => {
     const connected = new Set<string>();
+    const reportedConnected = new Set<string>();
+    const inferredConnected = new Set<string>();
     const degree = new Map<string, number>();
     let documentWebLinks = 0;
+    let reportedLinks = 0;
+    let inferredLinks = 0;
+    let comparisonLinks = 0;
+    let contextReferences = 0;
     for (const candidate of candidates) {
-      if (!candidate.statement) continue;
-      for (const id of candidate.entityIds) if (entities.has(id)) {
+      const statement = candidate.statement;
+      if (!statement) continue;
+      contextReferences += CONTEXT_KEYS.filter(key => typeof statement.scope?.[key] === 'string' && entities.has(String(statement.scope[key])) && statement.scope[key] !== statement.subject_id && statement.scope[key] !== statement.object_id).length;
+      // A text description and an entity mentioned only in scope are not an
+      // entity-to-entity relationship. Connectivity uses exact saved endpoints.
+      const subject = entities.get(statement.subject_id);
+      const object = entities.get(statement.object_id || '');
+      if (!subject || !object) continue;
+      for (const id of new Set([subject.entity_id, object.entity_id])) {
         connected.add(id);
         degree.set(id, (degree.get(id) || 0) + 1);
+        if (candidate.kind === 'relationship') reportedConnected.add(id);
+        if (candidate.kind === 'inference') inferredConnected.add(id);
       }
-      const subject = entities.get(candidate.statement.subject_id);
-      const object = entities.get(candidate.statement.object_id || '');
-      if (subject && object && origin(sources.get(subject.source_id)) !== origin(sources.get(object.source_id))) documentWebLinks++;
+      if (candidate.kind === 'relationship') reportedLinks++;
+      else if (candidate.kind === 'inference') inferredLinks++;
+      else if (candidate.kind === 'comparison') comparisonLinks++;
+      if (origin(sources.get(subject.source_id)) !== origin(sources.get(object.source_id))) documentWebLinks++;
     }
     const types = new Map<string, number>();
     for (const entity of graph.entities) types.set(entity.entity_type, (types.get(entity.entity_type) || 0) + 1);
@@ -218,7 +193,8 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       reviewCounts[decision === 'accept' ? 'included' : decision === 'reject' ? 'excluded' : 'pending']++;
     }
     return {
-      connected: connected.size,
+      connected: connected.size, reportedConnected: reportedConnected.size, inferredConnected: inferredConnected.size,
+      reportedLinks, inferredLinks, comparisonLinks, contextReferences,
       isolated: graph.entities.filter(entity => !connected.has(entity.entity_id)),
       documentWebLinks,
       types: [...types].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
@@ -250,48 +226,17 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   useEffect(() => { setPage(0); }, [query, category, sourceFilter, documentSourceFilter, showInferred, statusFilter]);
   useEffect(() => { setRationale(''); setReviewError(null); setConnectionPage(0); }, [selected?.id]);
 
-  const network = useMemo(() => {
-    // A retained inspector selection must not inject non-matching concepts into
-    // the filtered network or its matching totals.
-    const focusedIds = new Set(!selectionOutsideFilters ? selected?.entityIds || [] : []);
-    const relatedIds = new Set(filtered.flatMap(candidate => candidate.entityIds));
-    for (const id of focusedIds) relatedIds.add(id);
-    const connections = filtered.filter(candidate => candidate.statement?.object_id);
-    const degree = new Map<string, number>();
-    for (const candidate of connections) for (const id of candidate.entityIds) degree.set(id, (degree.get(id) || 0) + 1);
-    const pool = graph.entities.filter(entity => relatedIds.has(entity.entity_id)).sort((a, b) =>
-      (degree.get(b.entity_id) || 0) - (degree.get(a.entity_id) || 0) || label(a).localeCompare(label(b)) || a.entity_id.localeCompare(b.entity_id));
-    const initialNodes = pool.slice(0, MAX_NODES);
-    const visibleIds = new Set(initialNodes.map(entity => entity.entity_id));
-    const extraFocused = pool.filter(entity => focusedIds.has(entity.entity_id) && !visibleIds.has(entity.entity_id));
-    // Keep the layout fixed when selecting already visible items. Only bring
-    // off-screen selected concepts into the bounded overview when needed.
-    const nodes = [...initialNodes.slice(0, MAX_NODES - extraFocused.length), ...extraFocused];
-    const primary = nodes.filter(entity => origin(sources.get(entity.source_id)) === 'primary');
-    const web = nodes.filter(entity => origin(sources.get(entity.source_id)) === 'web');
-    const positions = new Map<string, GraphPoint>();
-    for (const [lane, list] of [primary, web].entries()) list.forEach((entity, index) => positions.set(entity.entity_id, { x: 66 + lane * 506 + (index % 4) * 120, y: 76 + Math.floor(index / 4) * 66 }));
-    const matchingEdges = connections.filter(candidate => positions.has(candidate.statement!.subject_id) && positions.has(candidate.statement!.object_id!));
-    const edges = [...matchingEdges].sort((a, b) => ({ relationship: 0, comparison: 1, inference: 2, concept: 3 }[a.kind] - { relationship: 0, comparison: 1, inference: 2, concept: 3 }[b.kind]) || a.id.localeCompare(b.id)).slice(0, MAX_CONNECTIONS);
-    if (selected?.statement?.object_id && !edges.some(candidate => candidate.id === selected.id)) {
-      const selectedEdge = matchingEdges.find(candidate => candidate.id === selected.id);
-      if (selectedEdge) { if (edges.length === MAX_CONNECTIONS) edges.pop(); edges.push(selectedEdge); }
-    }
-    const height = Math.max(245, 125 + Math.ceil(Math.max(primary.length, web.length) / 4) * 66);
-    const geometries = new Map<string, ConnectionGeometry>();
-    const occupied: GraphPoint[] = [];
-    const nodePoints = [...positions.values()];
-    for (const candidate of [...edges].sort((a, b) => a.id.localeCompare(b.id))) {
-      const start = positions.get(candidate.statement!.subject_id)!;
-      const end = positions.get(candidate.statement!.object_id!)!;
-      const base = { x: (start.x + end.x) / 2, y: start.y === end.y ? start.y - 32 : (start.y + end.y) / 2 };
-      const anchor = findConnectionAnchor(base, occupied, nodePoints, height);
-      occupied.push(anchor);
-      geometries.set(candidate.id, connectionGeometry(start, end, anchor));
-    }
-    return { nodes, positions, edges, geometries, total: pool.length, totalConnections: matchingEdges.length, height };
-  }, [filtered, selected, selectionOutsideFilters, graph.entities, sources]);
+  const networkEntities = useMemo(() => {
+    const matchingIds = new Set(filtered.flatMap(candidate => candidate.entityIds));
+    return graph.entities.filter(entity => matchingIds.has(entity.entity_id));
+  }, [filtered, graph.entities]);
+  const networkConnections = useMemo(() => filtered.filter((candidate): candidate is Candidate & { kind: NetworkConnection['kind']; statement: GraphStatement } => Boolean(candidate.statement) && candidate.kind !== 'concept').map(candidate => ({
+    id: candidate.id, title: candidate.title, kind: candidate.kind, statement: candidate.statement,
+    excluded: activeDecisions.get(candidate.id)?.decision === 'reject',
+  })), [filtered, activeDecisions]);
+  const excludedEntityIds = useMemo(() => new Set(graph.entities.filter(entity => activeDecisions.get(entity.entity_id)?.decision === 'reject').map(entity => entity.entity_id)), [graph.entities, activeDecisions]);
   const selectedEvidence = selected?.evidenceIds.map(id => evidence.get(id)).filter((item): item is GraphEvidence => Boolean(item)) || [];
+  const parallelStatements = selected?.statement?.object_id ? candidates.filter(candidate => candidate.id !== selected.id && candidate.kind === selected.kind && candidate.statement?.subject_id === selected.statement!.subject_id && candidate.statement.object_id === selected.statement!.object_id && candidate.statement.predicate === selected.statement!.predicate && candidate.statement.polarity === selected.statement!.polarity) : [];
   const dependencies = selected?.statement ? selected.entityIds.map(id => entities.get(id)).filter((item): item is GraphEntity => Boolean(item)) : [];
   const excludedDependencies = dependencies.filter(entity => status(entity.entity_id) === 'excluded');
   const pendingDependencies = dependencies.filter(entity => status(entity.entity_id) === 'pending');
@@ -300,7 +245,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const reviewBusy = busy || reviewing;
 
   async function review(decision: 'accept' | 'reject') {
-    if (!selected || selected.kind === 'inference' || graph.read_only || !canReview || reviewBusy || !rationale.trim()) return;
+    if (!selected || selected.statement?.derived_from_assertion_id || selected.kind === 'inference' || graph.read_only || !canReview || reviewBusy || !rationale.trim()) return;
     setReviewing(true);
     setReviewError(null);
     try {
@@ -320,7 +265,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
           <span><strong>{graph.sources.length.toLocaleString()}</strong> sources</span>
           <span><strong>{graph.entities.length.toLocaleString()}</strong> concepts</span>
           <span><strong>{graph.assertions.length.toLocaleString()}</strong> reported statements</span>
-          <span><strong>{graph.alignments.length.toLocaleString()}</strong> proposed comparisons</span>
+          <span><strong>{graph.alignments.length.toLocaleString()}</strong> proposed comparisons</span>{(graph.supported_relationships || []).length > 0 && <span><strong>{graph.supported_relationships!.length.toLocaleString()}</strong> recovered source relationships</span>}
           <span><strong>{(graph.inferences || []).length.toLocaleString()}</strong> inferred connections</span>
           {graph.assertions.some(item => !item.object_id) && <span><strong>{graph.assertions.filter(item => !item.object_id).length.toLocaleString()}</strong> text descriptions</span>}
         </div>
@@ -344,37 +289,21 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       <div className="rge-network-panel">
       <div className="rge-network-heading">
         <h4>Connection overview</h4>
-        <div className="rge-legend"><span className="rge-primary-dot">Document concept</span><span className="rge-web-dot">Web concept</span><span className="rge-solid-line">Reported relationship</span><span className="rge-dashed-line">Proposed comparison</span>{(graph.inferences || []).length > 0 && <span className="rge-inference-line">Inferred connection</span>}</div>
+        <div className="rge-legend"><span className="rge-solid-line">Reported relationship</span><span className="rge-alignment-line">Concept alignment</span><span className="rge-dashed-line">Proposed comparison</span>{(graph.inferences || []).length > 0 && <span className="rge-inference-line">Inferred connection</span>}<span className="rge-negative-line">Negative claim</span><span className="rge-uncertain-line">Uncertain claim</span><span className="rge-source-line">Source association</span></div>
       </div>
-      {network.nodes.length ? (
-        <div className="rge-network-scroll" tabIndex={0} role="region" aria-label="Graph canvas. Scroll horizontally to see all concepts.">
-          <svg className="rge-network" viewBox={`0 0 1000 ${network.height}`} role="group" aria-label="Interactive graph overview. Choose a concept or connection to inspect its evidence.">
-            <defs><marker id={arrowId} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto-start-reverse"><path d="M 0 0 L 7 3.5 L 0 7 z" fill="#64748b" /></marker></defs>
-            <text x="20" y="28" className="rge-lane-label">DOCUMENTS</text><text x="526" y="28" className="rge-lane-label">WEB SOURCES</text>
-            <line x1="500" y1="12" x2="500" y2={network.height - 10} stroke="#e2e8f0" />
-            {network.edges.map(candidate => <g key={candidate.id} onClick={() => setSelectedId(candidate.id)} className={`rge-edge ${candidate.kind === 'comparison' ? 'rge-edge-comparison' : candidate.kind === 'inference' ? 'rge-edge-inference' : ''} ${status(candidate.id) === 'excluded' ? 'rge-edge-excluded' : ''} ${selected?.id === candidate.id ? 'rge-edge-selected' : ''}`}><title>{candidate.title}</title><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-hit" /><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-visible" markerEnd={candidate.kind === 'relationship' ? `url(#${arrowId})` : undefined} /></g>)}
-            {network.nodes.map(entity => {
-              const point = network.positions.get(entity.entity_id)!;
-              const selectedNode = selected?.entityIds.includes(entity.entity_id);
-              return <g key={entity.entity_id} transform={`translate(${point.x},${point.y})`} role="button" tabIndex={0} aria-label={`${label(entity)}. ${humanize(entity.entity_type)}. ${sources.get(entity.source_id)?.title || 'Source'}. ${statusLabel[status(entity.entity_id)]}.`} onClick={() => setSelectedId(entity.entity_id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(entity.entity_id); } }} className={`rge-node rge-node-${origin(sources.get(entity.source_id))} ${selectedNode ? 'rge-node-selected' : ''} ${status(entity.entity_id) === 'excluded' ? 'rge-node-excluded' : ''}`}><title>{`${label(entity)} · ${sources.get(entity.source_id)?.title || 'Source'}`}</title><rect x="-53" y="-21" width="106" height="42" rx="8" /><text y="-2" textAnchor="middle">{short(label(entity), 18)}</text><text y="13" textAnchor="middle" className="rge-node-type">{short(humanize(entity.entity_type), 19)}</text></g>;
-            })}
-            {network.edges.map(candidate => {
-              const anchor = network.geometries.get(candidate.id)!.anchor;
-              return <circle key={candidate.id} cx={anchor.x} cy={anchor.y} r="7" role="button" tabIndex={0} aria-label={`${kindLabel[candidate.kind]}: ${candidate.title}`} onClick={() => setSelectedId(candidate.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(candidate.id); } }} className={`rge-connection-target ${candidate.kind === 'comparison' ? 'rge-connection-target-comparison' : candidate.kind === 'inference' ? 'rge-connection-target-inference' : ''} ${selected?.id === candidate.id ? 'rge-connection-target-selected' : ''}`}><title>{`${kindLabel[candidate.kind]}: ${candidate.title}`}</title></circle>;
-            })}
-          </svg>
-        </div>
-      ) : <p className="rge-empty">No concepts match these filters.</p>}
-      <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Text descriptions appear in the searchable list and inspector rather than as concept-to-concept edges. Scroll the graph horizontally when needed. Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
+      <GraphNetwork entities={networkEntities} sources={graph.sources} connections={networkConnections} selectedId={selected?.id} selectedEntityIds={!selectionOutsideFilters ? selected?.entityIds || [] : []} excludedEntityIds={excludedEntityIds} onSelect={setSelectedId} />
       </div>
       <section className="rge-insights" aria-labelledby={`${controlId}-insights`}>
         <h4 id={`${controlId}-insights`}>Graph insights</h4>
         <p className="rge-subtle">Counts cover this graph view before search and filters, including pending and excluded items. They describe recorded structure, not extraction completeness.</p>
         <dl className="rge-insight-totals">
-          <div><dt>Concepts with connections</dt><dd>{insights.connected.toLocaleString()}</dd></div>
+          <div><dt>Concepts with reported links</dt><dd>{insights.reportedConnected.toLocaleString()}</dd></div>
+          <div><dt>Concepts with inferred links</dt><dd>{insights.inferredConnected.toLocaleString()}</dd></div>
+          <div><dt>Concepts with any concept link</dt><dd>{insights.connected.toLocaleString()}</dd></div>
           <div><dt>Concepts without connections</dt><dd>{insights.isolated.length.toLocaleString()}</dd></div>
           <div><dt>Document–web connections</dt><dd>{insights.documentWebLinks.toLocaleString()}</dd></div>
         </dl>
+        <p className="rge-subtle">{insights.reportedLinks.toLocaleString()} reported relationship statements · {insights.comparisonLinks.toLocaleString()} proposed comparisons · {insights.inferredLinks.toLocaleString()} inferred statements · {insights.contextReferences.toLocaleString()} exact context references. Text descriptions and context references are counted separately from concept links.</p>
         <div className="rge-type-counts" aria-label="Entity types">{insights.types.map(([type, count]) => <span key={type}>{humanize(type)} <strong>{count.toLocaleString()}</strong></span>)}</div>
         <p className="rge-insight-review"><strong>Review:</strong> {insights.reviewCounts.pending.toLocaleString()} pending · {insights.reviewCounts.included.toLocaleString()} included · {insights.reviewCounts.excluded.toLocaleString()} excluded. Inclusion is a curation decision.</p>
         {insights.mostConnected.length > 0 && <div className="rge-insight-links"><strong>Most connected concepts</strong><div>{insights.mostConnected.map(([id, count]) => <button type="button" key={id} onClick={() => setSelectedId(id)}>{label(entities.get(id))} <span>{count}</span></button>)}</div></div>}
@@ -384,7 +313,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
           <summary>Browse entities and connections <span>({filtered.length.toLocaleString()} items)</span></summary>
           {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(candidate => {
             const blocked = candidate.statement && candidate.entityIds.some(id => status(id) === 'excluded');
-            return <button key={candidate.id} type="button" className={`rge-candidate ${selected?.id === candidate.id ? 'rge-candidate-selected' : ''}`} onClick={() => setSelectedId(candidate.id)} aria-pressed={selected?.id === candidate.id}><span className="rge-candidate-kind">{kindLabel[candidate.kind]}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></span><strong>{candidate.title}</strong><span className="rge-candidate-source">{candidate.sourceIds.map(id => sources.get(id)?.title || 'Source').join(' · ')}</span>{blocked && <span className="rge-blocked">Excluded from release: a required concept is excluded.</span>}</button>;
+            return <button key={candidate.id} type="button" className={`rge-candidate ${selected?.id === candidate.id ? 'rge-candidate-selected' : ''}`} onClick={() => setSelectedId(candidate.id)} aria-pressed={selected?.id === candidate.id}><span className="rge-candidate-kind">{candidate.statement?.derived_from_assertion_id ? 'Recovered source relationship' : kindLabel[candidate.kind]}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></span><strong>{candidate.title}</strong><span className="rge-candidate-source">{candidate.sourceIds.map(id => sources.get(id)?.title || 'Source').join(' · ')}</span>{blocked && <span className="rge-blocked">Excluded from release: a required concept is excluded.</span>}</button>;
           })}
           {!filtered.length && <p className="rge-empty">No matching items. Try a broader search or another filter.</p>}
           {totalPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} of {totalPages}</span><button type="button" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</button></div>}
@@ -394,7 +323,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
           <h4 className="rge-inspector-heading">Entity and connection details</h4>
           {!selected ? <div className="rge-empty-inspector"><h4>Start with a concept or connection</h4><p>Choose an item above or in the list to see its source quotations, context and review decisions.</p><p>Including an item approves its place in this graph. Specialist verification remains a separate research step.</p></div> : <>
             {selectionOutsideFilters && <p className="rge-subtle" role="status">This selected item is outside the current search or filters. Its details stay open; it is not added to the matching graph results.</p>}
-            <div className="rge-inspector-top"><span>{kindLabel[selected.kind]}</span><span className={`rge-status rge-status-${status(selected.id)}`}>{statusLabel[status(selected.id)]}</span></div>
+            <div className="rge-inspector-top"><span>{selected.statement?.derived_from_assertion_id ? 'Recovered source relationship' : kindLabel[selected.kind]}</span><span className={`rge-status rge-status-${status(selected.id)}`}>{statusLabel[status(selected.id)]}</span></div>
             <h4>{selected.title}</h4>
             {selected.entity && <><p className="rge-subtle">{humanize(selected.entity.entity_type)} · {origin(sources.get(selected.entity.source_id)) === 'web' ? 'Web source account' : 'Document source account'}</p>{selected.entity.label_en && selected.entity.label_en !== selected.entity.label_original && <p className="rge-translation">English label: proposed translation awaiting review.<br />Original label: <span>{selected.entity.label_original}</span></p>}
               <dl className="rge-context"><dt>Source</dt><dd>{sources.get(selected.entity.source_id)?.title || selected.entity.source_id}</dd>{Object.entries(selected.entity.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
@@ -402,11 +331,14 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             </>}
             {selected.statement && <>
               <dl className="rge-context"><dt>Meaning</dt><dd>{selected.kind === 'inference' ? 'An unverified navigation proposal derived from the cited context or premises; not a source-reported fact.' : selected.kind === 'comparison' ? 'A possible correspondence between two source accounts; the concepts remain separate.' : humanize(selected.statement.epistemic_kind || 'source_report')}</dd><dt>Statement</dt><dd>{selected.kind === 'inference' ? 'Uncertain inferred connection' : selected.kind === 'comparison' ? 'Proposed comparison' : selected.statement.polarity === 'negative' ? 'Negative claim' : selected.statement.polarity === 'uncertain' ? 'Uncertain claim' : 'Affirmative claim'}</dd>{Object.entries(selected.statement.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
+              {selected.statement.derived_from_assertion_id && <div className="rge-recovered-notice"><strong>Recovered source relationship</strong><p>This endpoint was resolved from an existing source statement. It retains the original quotation and polarity and awaits review.</p><button type="button" onClick={() => setSelectedId(selected.statement!.derived_from_assertion_id!)}>Inspect original statement</button></div>}
               {selected.statement.rationale && <p className="rge-rationale">{selected.statement.rationale}</p>}
+              {parallelStatements.length > 0 && <div className="rge-parallel-statements"><strong>Other statements on this link ({parallelStatements.length})</strong><p>The visual line groups matching endpoints, relation and polarity. Every statement retains its own evidence and review decision.</p>{parallelStatements.map((candidate, index) => <button type="button" key={candidate.id} onClick={() => setSelectedId(candidate.id)}>Statement {index + 1} · {candidate.evidenceIds.length} quotations · {statusLabel[status(candidate.id)]}</button>)}</div>}
               {selected.kind === 'inference' && <div className="rge-inference-premises"><strong>Why this connection was suggested</strong><p>{humanize(selected.statement.rule || 'Evidence context')}</p>{selected.statement.translation_involved && <p>A proposed translation contributes to this match and requires review.</p>}{(selected.statement.premise_ids || []).map(id => { const premise = candidateMap.get(id); return premise ? <button key={id} type="button" onClick={() => setSelectedId(id)}>{premise.title}</button> : <p key={id}>Recorded premise: {id}</p>; })}</div>}
               {dependencies.length > 0 && <div className="rge-dependencies"><strong>Required concepts</strong><div>{dependencies.map(entity => <button type="button" key={entity.entity_id} onClick={() => setSelectedId(entity.entity_id)}>{label(entity)} <span className={`rge-status rge-status-${status(entity.entity_id)}`}>{statusLabel[status(entity.entity_id)]}</span></button>)}</div></div>}
               {excludedDependencies.length > 0 && <p className="rge-blocked">This connection is excluded from releases while a required concept is excluded. Review that concept first.</p>}
             </>}
+            <details className="rge-record-provenance"><summary>Original record and provenance</summary><pre>{JSON.stringify(selected.entity || selected.statement, null, 2)}</pre></details>
             <h5>Original source evidence <span>({selectedEvidence.length})</span></h5>
             <p className="rge-subtle">Quotations retain their original language and wording.</p>
             <div className="rge-evidence-list">{selectedEvidence.map(item => {
@@ -419,7 +351,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             <div className="rge-review-actions">
               <h5>Review for graph inclusion</h5><p>Inclusion records a curation decision, not scientific verification.</p>
               {activeDecisions.get(selected.id) && <p className="rge-last-review">Latest decision: {activeDecisions.get(selected.id)?.rationale}</p>}
-              {canReview && !graph.read_only && selected.kind !== 'inference' ? <><label htmlFor={`${controlId}-rationale`}>Reason for this decision<textarea id={`${controlId}-rationale`} value={rationale} onChange={event => setRationale(event.target.value)} placeholder="Explain why the evidence should be included or excluded." rows={3} maxLength={2000} disabled={reviewBusy} /></label>{pendingDependencies.length > 0 && <p className="rge-subtle">Including this connection also includes {pendingDependencies.length} required {pendingDependencies.length === 1 ? 'concept' : 'concepts'} listed above.</p>}<div className="rge-action-buttons"><button type="button" className="rge-include" disabled={reviewBusy || !rationale.trim() || excludedDependencies.length > 0 || !selectedEvidence.length} onClick={() => void review('accept')}>{reviewing ? 'Saving…' : 'Include in graph'}</button><button type="button" className="rge-exclude" disabled={reviewBusy || !rationale.trim()} onClick={() => void review('reject')}>Exclude</button></div></> : <p className="rge-subtle">{graph.read_only ? 'This combined snapshot is read-only. Original source review decisions remain with their graphs; inferred connections require separate specialist review.' : graph.release_kind ? 'This published version is read-only. Start a new graph to make changes.' : 'A reviewer can record inclusion decisions. You can explore all quotations and connections.'}</p>}
+              {canReview && !graph.read_only && !selected.statement?.derived_from_assertion_id && selected.kind !== 'inference' ? <><label htmlFor={`${controlId}-rationale`}>Reason for this decision<textarea id={`${controlId}-rationale`} value={rationale} onChange={event => setRationale(event.target.value)} placeholder="Explain why the evidence should be included or excluded." rows={3} maxLength={2000} disabled={reviewBusy} /></label>{pendingDependencies.length > 0 && <p className="rge-subtle">Including this connection also includes {pendingDependencies.length} required {pendingDependencies.length === 1 ? 'concept' : 'concepts'} listed above.</p>}<div className="rge-action-buttons"><button type="button" className="rge-include" disabled={reviewBusy || !rationale.trim() || excludedDependencies.length > 0 || !selectedEvidence.length} onClick={() => void review('accept')}>{reviewing ? 'Saving…' : 'Include in graph'}</button><button type="button" className="rge-exclude" disabled={reviewBusy || !rationale.trim()} onClick={() => void review('reject')}>Exclude</button></div></> : <p className="rge-subtle">{selected.statement?.derived_from_assertion_id ? 'Recovered endpoints require specialist review. Review the original source statement in its graph; this derived proposal does not inherit approval.' : graph.read_only ? 'This combined snapshot is read-only. Original source review decisions remain with their graphs; inferred connections require separate specialist review.' : graph.release_kind ? 'This published version is read-only. Start a new graph to make changes.' : 'A reviewer can record inclusion decisions. You can explore all quotations and connections.'}</p>}
               {reviewError && <p role="alert" className="rge-blocked">{reviewError}</p>}
             </div>
           </>}

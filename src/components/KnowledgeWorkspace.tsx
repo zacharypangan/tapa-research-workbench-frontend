@@ -62,6 +62,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
   });
   const [networkContent, setNetworkContent] = useState<NetworkContent | null>(null);
+  const [savedGraphsExpanded, setSavedGraphsExpanded] = useState(false);
   const [content, setContent] = useState<RunContent | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialTotal, setMaterialTotal] = useState(0);
@@ -370,6 +371,14 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     selectRun(derived.run_id); setRun(derived); await refreshRuns();
     setNotice('A new draft uses the current OCR and extraction methods. The original graph and review history are preserved.');
   });
+  const improveRelationships = async () => action('improve', async () => {
+    if (!runId) return;
+    const derived = await api<ResearchRun>(`/research-runs/${runId}/improve`, {
+      method: 'POST', body: JSON.stringify({ max_auto_batches: 4 }),
+    });
+    selectRun(derived.run_id); setRun(derived); await refreshRuns();
+    setNotice('A separate draft is reading up to four source sections with relationship-focused guidance. Original graphs stay intact; continue processing afterward to cover remaining passages.');
+  });
   const discoverSources = async () => action('discover', async () => {
     if (!runId) return;
     await api(`/research-runs/${runId}/discover`, { method: 'POST' });
@@ -459,9 +468,12 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
       <WorkbenchHeader navigation={headerNavigation} actions={<button className={BUTTON} disabled={!canWrite || !!busy} onClick={newProject}>New graph</button>} />
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="min-h-0 overflow-auto border-r border-slate-200 bg-white p-4">
-            <h3 className="mb-3 text-xs font-black uppercase tracking-wider">Saved graphs</h3>
+            <h3 className="mb-3 hidden text-xs font-black uppercase tracking-wider md:block">Saved graphs</h3>
+            <button className="text-xs font-bold uppercase tracking-wider md:hidden" aria-expanded={savedGraphsExpanded} aria-controls="knowledge-saved-graphs" onClick={() => setSavedGraphsExpanded(value => !value)}>{savedGraphsExpanded ? 'Hide' : 'Show'} saved graphs ({runTotal})</button>
+            <div id="knowledge-saved-graphs" className={`${savedGraphsExpanded ? 'mt-3 block' : 'hidden'} md:mt-0 md:block`}>
             {loading ? <p className="text-sm text-slate-500">Loading projects…</p> : runs.length === 0 ? <p className="text-sm text-slate-500">Your first graph will appear here. Projects are saved to your workspace.</p> : <div className="space-y-2">{runs.map((item) => <button key={item.run_id} onClick={() => selectRun(item.run_id)} disabled={!!busy} className={`w-full rounded-lg border p-3 text-left ${!networkId && runId === item.run_id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}><span className="block break-words text-sm font-semibold">{item.title || 'Research graph'}</span><span className="mt-1 block text-xs text-slate-500">{statusText(item.status)}</span><span className="mt-1 block text-xs text-slate-400">{new Date(item.created_at).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span></button>)}</div>}
             {runTotal > 20 && <div className="mt-3 flex items-center justify-between text-xs"><button disabled={!!busy || runOffset === 0} onClick={() => setRunOffset((value) => Math.max(0, value - 20))}>Previous</button><span>{runOffset + 1}–{Math.min(runOffset + 20, runTotal)}</span><button disabled={!!busy || runOffset + 20 >= runTotal} onClick={() => setRunOffset((value) => value + 20)}>Next</button></div>}
+            </div>
           </aside>
           <section className="min-w-0 space-y-4 overflow-auto p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -497,6 +509,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
             {run && <div className="rounded-xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-lg font-semibold">{run.title || 'Research graph'}</h3><p className="mt-1 text-sm text-slate-600" aria-live="polite">{run.status === 'awaiting_annotations' && run.automatic_batch_budget_reached ? 'Saved draft ready — more passages available' : statusText(run.status)}</p></div><button className={BUTTON} disabled={!!busy} onClick={() => void action('refresh', async () => { await loadRun(run.run_id); await refreshRuns(); })}>Refresh</button></div>
               {RUNNING.has(run.status) && <p className="mt-3 text-sm text-slate-500">This project runs in the background. You can leave this page and return later.</p>}
               {runDescription(run) && <p className="mt-3 text-sm text-slate-600">{runDescription(run)}</p>}
+              {!RUNNING.has(run.status) && capabilities?.extraction.configured && <div className="mt-3 flex flex-wrap items-center gap-3"><button className={BUTTON} disabled={!canWrite || !!busy} onClick={() => void improveRelationships()}>{busy === 'improve' ? 'Starting relationship-focused draft…' : 'Improve relationships from source'}</button><span className="text-xs text-slate-500">Creates a separate draft from source quotations; starts with four sections.</span></div>}
               {(run.status === 'failed' || run.status === 'queue_failed') && <button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy} onClick={() => void resume()}>Retry processing</button>}
               {run.status === 'awaiting_annotations' && run.automatic_batch_budget_reached && <button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy} onClick={() => void resume()}>Continue processing more passages</button>}
               {['awaiting_readable_documents', 'awaiting_annotations', 'failed', 'queue_failed'].includes(run.status) && (!run.automatic_batch_budget_reached || ['failed', 'queue_failed'].includes(run.status)) && <button className={`${BUTTON} mt-3 ml-2`} disabled={!canWrite || !!busy} onClick={() => void retryCurrent()}>{busy === 'retry' ? 'Starting updated draft…' : 'Retry with current processing'}</button>}

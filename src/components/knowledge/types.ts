@@ -85,6 +85,9 @@ export interface GraphEvidence {
 }
 
 export interface GraphStatement {
+  layer?: string;
+  derived_from_assertion_id?: string;
+  recovery_method?: string;
   inference_id?: string;
   rule?: string;
   premise_ids?: string[];
@@ -132,6 +135,7 @@ export interface GraphData {
   evidence: GraphEvidence[];
   sources: GraphSource[];
   assertions: GraphStatement[];
+  supported_relationships?: GraphStatement[];
   alignments: GraphStatement[];
   decisions?: ReviewDecision[];
   release_kind?: string;

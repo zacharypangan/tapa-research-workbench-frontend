@@ -22,7 +22,12 @@ export interface GraphNetwork {
   scope: 'selected' | 'library';
   created_at: string;
   run_ids: string[];
-  counts: { sources: number; entities: number; evidence: number; assertions: number; alignments: number; inferred_connections: number };
+  version?: string;
+  counts: { sources: number; entities: number; evidence: number; assertions: number; alignments: number; inferred_connections: number; supported_relationships?: number };
+  quality_report?: {
+    reported: { concepts_with_edges: number; isolated_concepts: number; document_web_claims: number };
+    combined: { concepts_with_edges: number; isolated_concepts: number; document_web_claims: number };
+  };
   coverage: {
     material_count: number;
     materials_with_graph: number;
@@ -68,6 +73,7 @@ export function GraphNetworksPanel({ api, active, canWrite, disabled, currentRun
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [networkError, setNetworkError] = useState('');
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     if (!active || (!expanded && !networkId)) return;
@@ -119,7 +125,7 @@ export function GraphNetworksPanel({ api, active, canWrite, disabled, currentRun
   const filteredRuns = useMemo(() => runs.filter(run => `${run.title || ''} ${run.documents?.map(document => document.title).join(' ') || ''}`.toLocaleLowerCase('en').includes(query.toLocaleLowerCase('en'))), [runs, query]);
   const selected = content?.network.network_id === networkId ? content.network : null;
   const build = async (singleRunId?: string) => {
-    setBusy(true); onBusyChange(true); setError('');
+    setBusy(true); onBusyChange(true); setError(''); setNotice('');
     try {
       const chosenScope = singleRunId ? 'selected' : scope;
       const created = await api<GraphNetwork>('/graph-networks', { method: 'POST', body: JSON.stringify({
@@ -131,10 +137,21 @@ export function GraphNetworksPanel({ api, active, canWrite, disabled, currentRun
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not build this network.'); }
     finally { setBusy(false); onBusyChange(false); }
   };
+  const update = async () => {
+    if (!networkId) return;
+    setBusy(true); onBusyChange(true); setError(''); setNotice('');
+    try {
+      const updated = await api<GraphNetwork>(`/graph-networks/${networkId}/refresh`, { method: 'POST' });
+      setRefresh(value => value + 1); onSelect(updated.network_id);
+      setNotice(updated.network_id === networkId ? 'This network already uses the current saved graphs and connection methods.' : 'Updated network saved. The previous snapshot remains available.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not update this network.'); }
+    finally { setBusy(false); onBusyChange(false); }
+  };
 
   return <div className="rounded-xl border border-slate-200 bg-white p-5">
     {currentRunId && !networkId && <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="max-w-2xl text-sm text-slate-600">Suggest additional connections for this graph, or combine it with other saved networks below.</p><button className={BUTTON} disabled={busy || disabled || !canWrite} onClick={() => void build(currentRunId)}>{busy ? 'Building suggestions…' : 'Suggest more connections'}</button></div>}
     {error && <p role="alert" className="mb-3 text-sm text-red-700">{error} <button className="underline" onClick={() => { setExpanded(true); setRefresh(value => value + 1); }}>Retry</button></p>}
+    {notice && <p role="status" className="mb-3 text-sm text-emerald-800">{notice}</p>}
     <details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
       <summary className="cursor-pointer text-base font-semibold">Combine graphs and explore the document library</summary>
       <p className="mt-3 text-sm text-slate-600">Connect saved graph drafts without changing their sources. Inferred connections are labelled proposals for review.</p>
@@ -171,10 +188,14 @@ export function GraphNetworksPanel({ api, active, canWrite, disabled, currentRun
       {networkError ? <p role="alert" className="text-sm text-red-700">{networkError} <button className="underline" onClick={() => setRefresh(value => value + 1)}>Retry</button></p> : !selected ? <p role="status" className="text-sm text-slate-500">Opening saved network…</p> : <>
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">{selected.title}</h3><p className="mt-1 text-xs text-slate-500">Saved {new Date(selected.created_at).toLocaleString('en')} · Read-only derived draft</p></div><GraphDownload className={BUTTON} filename={`network-${selected.network_id}.json`} url={`${API_BASE_URL}/graph-networks/${selected.network_id}/export`}>Download network and document register</GraphDownload></div>
         <p className="mt-3 text-sm text-slate-700">{selected.counts.entities} concepts · {selected.counts.assertions} source statements · {selected.counts.alignments} proposed comparisons · {selected.counts.inferred_connections} inferred connections · {selected.counts.evidence} quotations</p>
+        {!!selected.counts.supported_relationships && <p className="mt-2 text-sm text-slate-600">{selected.counts.supported_relationships} source statements also have a recovered concept-to-concept representation; their original literal records remain available.</p>}
+        {selected.quality_report && <p className="mt-2 text-sm text-slate-600">Concepts linked by reported relationships: {selected.quality_report.reported.concepts_with_edges}. Including analytical suggestions: {selected.quality_report.combined.concepts_with_edges}. {selected.quality_report.combined.isolated_concepts} concepts have no traversable connection. These counts describe structure, not scientific accuracy.</p>}
         <p className="mt-2 text-sm text-slate-600">Graphs cover {selected.coverage.materials_with_graph} of {selected.coverage.material_count} documents{selected.coverage.covered_file_count !== undefined ? ` and ${selected.coverage.covered_file_count} of ${selected.coverage.file_count} files` : ''}. {selected.coverage.files_with_extraction} of {selected.coverage.file_count} files have extracted text.</p>
         <p className="mt-2 text-sm text-amber-900">Inferred connections are research suggestions. Inspect their rule and supporting concepts; they are separate from relationships reported by a source.</p>
+        <p className="mt-2 text-xs text-slate-500">{selected.scope === 'library' ? 'Update selects current saved drafts across the library.' : 'Update rereads these selected drafts. To include a newly generated draft, choose it in Combine graphs above.'} The previous snapshot stays available.</p>
         <details className="mt-3 text-sm"><summary className="cursor-pointer font-medium">Document coverage and missing graphs ({selected.coverage.materials_without_graph})</summary><ul className="mt-2 max-h-56 space-y-2 overflow-y-auto">{selected.coverage.materials.map(material => <li key={material.material_id} className="rounded-lg bg-slate-50 p-3"><span className="font-medium">{material.title}</span><span className={`ml-2 text-xs ${material.status === 'included' && !material.partial_extraction ? 'text-emerald-800' : 'text-amber-800'}`}>{material.status === 'included' ? material.partial_extraction ? 'Partial draft included' : 'Included' : material.status === 'no_extracted_text' ? 'Readable text needed' : 'Saved graph needed'}</span><span className="mt-1 block text-xs text-slate-500">{material.covered_file_count !== undefined ? `${material.covered_file_count} of ` : ''}{material.file_count} file(s) represented · {material.extracted_segment_count} extracted section(s){material.detail ? ` · ${material.detail}` : ''}</span>{material.files?.some(file => !file.included_in_graph) && <span className="mt-1 block break-words text-xs text-amber-800">Files not yet represented: {material.files.filter(file => !file.included_in_graph).map(file => file.original_filename).join('; ')}</span>}</li>)}</ul></details>
       </>}
+      <button className={`${BUTTON} mt-4 mr-2`} disabled={busy || disabled || !canWrite || !selected} onClick={() => void update()}>{busy ? 'Updating saved network…' : 'Update connections and coverage'}</button>
       <button className={`${BUTTON} mt-4`} disabled={busy || disabled} onClick={() => onSelect(null)}>Return to individual graphs</button>
     </div>}
   </div>;
