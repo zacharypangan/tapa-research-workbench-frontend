@@ -61,6 +61,9 @@ const WORKFLOW_STATUS_ORDER = [
 const evidenceMatchLabel = (item: { score: number; keyword_rank_score?: number | null }) =>
   item.keyword_rank_score != null ? 'Keyword match' : `${(item.score * 100).toFixed(1)} match`;
 
+const evidenceRetrievalReason = (item: { content_text: string; score: number; keyword_rank_score?: number | null }, terms: string[]) =>
+  item.keyword_rank_score != null ? 'Keyword matching in source text; semantic similarity is unavailable.' : getRetrievalReason(item.content_text, terms, item.score);
+
 export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarget, onTutorialAction, initialFocus, focusSignal, headerNavigation, evidenceNavigation, onOpenKnowledgeGraph }: RepositoryWorkbenchProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1082,7 +1085,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
           </p>
           ${printableEvidenceMeta(passage)}
           ${printableWordlistRows(passage.wordlist_rows)}
-          <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+          <p><strong>Retrieval basis:</strong> ${escapeHtml(evidenceRetrievalReason(passage, activeQueryTerms))}</p>
           <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
         </section>
       `)
@@ -1141,7 +1144,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
       evidenceMatchLabel(passage),
       passage.research_relevance || '',
       passage.evidence_type || '',
-      getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+      evidenceRetrievalReason(passage, activeQueryTerms),
       cleanAnnotationText(passage.content_text),
     ]);
 
@@ -1186,7 +1189,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
               <h3>${escapeHtml(passage.page_ref)} · ${evidenceMatchLabel(passage)}</h3>
               ${printableEvidenceMeta(passage)}
               ${printableWordlistRows(passage.wordlist_rows)}
-              <p><strong>Retrieval basis:</strong> ${escapeHtml(getRetrievalReason(passage.content_text, activeQueryTerms, passage.score))}</p>
+              <p><strong>Retrieval basis:</strong> ${escapeHtml(evidenceRetrievalReason(passage, activeQueryTerms))}</p>
               <p class="match">${highlightSearchTermsHtml(cleanAnnotationText(passage.content_text), activeQueryTerms)}</p>
             `)
             .join('')}
@@ -1232,7 +1235,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
         evidenceMatchLabel(passage),
         passage.research_relevance || '',
         passage.evidence_type || '',
-        getRetrievalReason(passage.content_text, activeQueryTerms, passage.score),
+        evidenceRetrievalReason(passage, activeQueryTerms),
         cleanAnnotationText(passage.content_text),
       ]),
       ...(theme.image_passages || []).map((image, imageIndex) => [
@@ -1611,7 +1614,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                         {result.page_ref} · {result.source_locator}
                       </div>
                       <div className="mt-1 text-[11px] font-semibold text-blue-700">
-                        {getRetrievalReason(result.content_text, activeQueryTerms, result.score)}
+                        {evidenceRetrievalReason(result, activeQueryTerms)}
                       </div>
                       <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-600">
                         {highlightSearchTerms(cleanAnnotationText(result.content_text), activeQueryTerms)}
@@ -1823,7 +1826,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
                               )}
                             </div>
                             <div className="mb-2 font-semibold text-blue-700">
-                              {passage.relevance_reason || getRetrievalReason(passage.content_text, activeQueryTerms, passage.score)}
+                              {passage.relevance_reason || evidenceRetrievalReason(passage, activeQueryTerms)}
                             </div>
                             {highlightSearchTerms(truncateText(cleanAnnotationText(passage.content_text), 320), activeQueryTerms)}
                           </button>
