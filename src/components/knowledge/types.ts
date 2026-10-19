@@ -85,6 +85,12 @@ export interface GraphEvidence {
 }
 
 export interface GraphStatement {
+  inference_id?: string;
+  rule?: string;
+  premise_ids?: string[];
+  via_entity_ids?: string[];
+  translation_involved?: boolean;
+
   assertion_id?: string;
   alignment_id?: string;
   candidate_id?: string;
@@ -114,6 +120,12 @@ export interface ReviewDecision {
 }
 
 export interface GraphData {
+  network_id?: string;
+  read_only?: boolean;
+  origin_decisions?: ReviewDecision[];
+  inferences?: GraphStatement[];
+  inference_report?: { generated?: number; by_rule?: Record<string, number>; truncated?: boolean; note?: string };
+
   partial_extraction?: boolean;
   pending_batch_count?: number;
   entities: GraphEntity[];

@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../config';
 import GraphDownload from './knowledge/GraphDownload';
 import type { Material, RepositoryFile, ResearchEvidenceNavigation } from './repository/types';
 import { GraphExplorer } from './knowledge/GraphExplorer';
+import { GraphNetworksPanel, type NetworkContent } from './knowledge/GraphNetworksPanel';
 import ManualConceptEditor from './knowledge/ManualConceptEditor';
 import { WorkbenchHeader } from './WorkbenchHeader';
 import type { AnnotationBatch, Capabilities, GraphData, OntologySpec, ResearchApi, ResearchRun, ResearchSeed, ReviewDecision, RunList } from './knowledge/types';
@@ -56,6 +57,11 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     const value = new URLSearchParams(window.location.search).get('graph');
     return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
   });
+  const [networkId, setNetworkId] = useState<string | null>(() => {
+    const value = new URLSearchParams(window.location.search).get('network');
+    return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+  });
+  const [networkContent, setNetworkContent] = useState<NetworkContent | null>(null);
   const [content, setContent] = useState<RunContent | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialTotal, setMaterialTotal] = useState(0);
@@ -89,12 +95,14 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     if (!active) return;
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'knowledge');
-    if (runId) url.searchParams.set('graph', runId);
+    if (networkId) url.searchParams.set('network', networkId);
+    else url.searchParams.delete('network');
+    if (runId && !networkId) url.searchParams.set('graph', runId);
     else url.searchParams.delete('graph');
-    if (documentId) url.searchParams.set('material', documentId);
+    if (documentId && !networkId) url.searchParams.set('material', documentId);
     else url.searchParams.delete('material');
     window.history.replaceState(null, '', url);
-  }, [active, runId, documentId]);
+  }, [active, runId, documentId, networkId]);
 
   const api: ResearchApi = useCallback(async <T,>(path: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
@@ -179,7 +187,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
   }, [api, materialQuery, sourceRefresh]);
 
   useEffect(() => {
-    if (!documentId || !capabilities) return;
+    if (!documentId || !capabilities || networkId) return;
     const controller = new AbortController();
     const signal = controller.signal;
     let waitingForPreparation = false;
@@ -273,17 +281,17 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
       }
     })();
     return () => { controller.abort(); window.clearTimeout(preparationTimer); };
-  }, [api, documentId, capabilities, documentRetry]);
+  }, [api, documentId, capabilities, documentRetry, networkId]);
 
   useEffect(() => {
-    if (!runId || !active || openingDocument) return;
+    if (!runId || !active || openingDocument || networkId) return;
     const controller = new AbortController();
     loadRun(runId, controller.signal).catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not open the graph project.'); });
     return () => controller.abort();
-  }, [runId, active, loadRun, openingDocument]);
+  }, [runId, active, loadRun, openingDocument, networkId]);
 
   useEffect(() => {
-    if (!runId || !run || !RUNNING.has(run.status) || !active) return;
+    if (!runId || !run || !RUNNING.has(run.status) || !active || networkId) return;
     let pending = false;
     const controller = new AbortController();
     const timer = window.setInterval(async () => {
@@ -293,7 +301,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
       finally { pending = false; }
     }, 2500);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [runId, run, active, loadRun]);
+  }, [runId, run, active, loadRun, networkId]);
 
   const action = async (name: string, operation: () => Promise<void>) => {
     setBusy(name); setError(''); setNotice('');
@@ -301,8 +309,11 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     finally { setBusy(''); }
   };
 
-  const selectRun = (id: string) => { selection.current = id; setRunId(id); setRun(null); setContent(null); setError(''); setNotice(''); setChosenSeeds([]); setFrontier([]); };
-  const newProject = () => { selection.current = null; setDocumentId(undefined); setMaterialDetail(null); setRunOffset(0); setRunId(null); setRun(null); setContent(null); setDocuments([]); setTitle(''); setChosenSeeds([]); setFrontier([]); setError(''); setNotice(''); idempotency.current = null; };
+  const selectNetwork = useCallback((id: string | null) => { setNetworkId(id); setNetworkContent(null); }, []);
+  const loadNetwork = useCallback((loaded: NetworkContent) => setNetworkContent(loaded), []);
+  const networkBusy = useCallback((building: boolean) => setBusy(building ? 'network' : ''), []);
+  const selectRun = (id: string) => { setNetworkId(null); setNetworkContent(null); selection.current = id; setRunId(id); setRun(null); setContent(null); setError(''); setNotice(''); setChosenSeeds([]); setFrontier([]); };
+  const newProject = () => { setNetworkId(null); setNetworkContent(null); selection.current = null; setDocumentId(undefined); setMaterialDetail(null); setRunOffset(0); setRunId(null); setRun(null); setContent(null); setDocuments([]); setTitle(''); setChosenSeeds([]); setFrontier([]); setError(''); setNotice(''); idempotency.current = null; };
 
   const addDocument = (material: Material, file: RepositoryFile) => {
     if (documents.some((entry) => entry.file_id === file.id)) return;
@@ -421,6 +432,7 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
 
   const data = content?.runId === runId ? content : null;
   const displayedGraph = useMemo(() => {
+    if (networkId) return networkContent?.network.network_id === networkId ? networkContent.graph : null;
     const graph = data?.graph;
     if (!graph || !documentId) return graph;
     const locator = `workbench:material/${documentId}/file/`;
@@ -435,12 +447,12 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
     return { ...graph, sources: graph.sources.filter((source) => sourceIds.has(source.source_id)), entities,
       evidence: graph.evidence.filter((item) => sourceIds.has(item.source_id)),
       assertions: graph.assertions.filter(included), alignments: graph.alignments.filter(included) };
-  }, [data?.graph, documentId]);
+  }, [data?.graph, documentId, networkId, networkContent]);
   const latestDecisions = useMemo(() => new Map((data?.decisions || []).map((decision) => [decision.candidate_id, decision.decision])), [data?.decisions]);
   const accepted = [...latestDecisions.values()].filter((decision) => decision === 'accept').length;
   const filteredSeeds = data?.seeds.filter((seed) => `${seed.label} ${seed.entity_type}`.toLocaleLowerCase('en').includes(seedQuery.toLocaleLowerCase('en'))) || [];
   const canWrite = !!capabilities?.can_write;
-  const canReview = !!capabilities?.can_review && run?.status === 'awaiting_review';
+  const canReview = !networkId && !!capabilities?.can_review && run?.status === 'awaiting_review';
 
   return (
     <main className="flex h-screen flex-col bg-slate-50 text-slate-900">
@@ -448,14 +460,16 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="min-h-0 overflow-auto border-r border-slate-200 bg-white p-4">
             <h3 className="mb-3 text-xs font-black uppercase tracking-wider">Saved graphs</h3>
-            {loading ? <p className="text-sm text-slate-500">Loading projects…</p> : runs.length === 0 ? <p className="text-sm text-slate-500">Your first graph will appear here. Projects are saved to your workspace.</p> : <div className="space-y-2">{runs.map((item) => <button key={item.run_id} onClick={() => selectRun(item.run_id)} disabled={!!busy} className={`w-full rounded-lg border p-3 text-left ${runId === item.run_id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}><span className="block break-words text-sm font-semibold">{item.title || 'Research graph'}</span><span className="mt-1 block text-xs text-slate-500">{statusText(item.status)}</span><span className="mt-1 block text-xs text-slate-400">{new Date(item.created_at).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span></button>)}</div>}
+            {loading ? <p className="text-sm text-slate-500">Loading projects…</p> : runs.length === 0 ? <p className="text-sm text-slate-500">Your first graph will appear here. Projects are saved to your workspace.</p> : <div className="space-y-2">{runs.map((item) => <button key={item.run_id} onClick={() => selectRun(item.run_id)} disabled={!!busy} className={`w-full rounded-lg border p-3 text-left ${!networkId && runId === item.run_id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}><span className="block break-words text-sm font-semibold">{item.title || 'Research graph'}</span><span className="mt-1 block text-xs text-slate-500">{statusText(item.status)}</span><span className="mt-1 block text-xs text-slate-400">{new Date(item.created_at).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span></button>)}</div>}
             {runTotal > 20 && <div className="mt-3 flex items-center justify-between text-xs"><button disabled={!!busy || runOffset === 0} onClick={() => setRunOffset((value) => Math.max(0, value - 20))}>Previous</button><span>{runOffset + 1}–{Math.min(runOffset + 20, runTotal)}</span><button disabled={!!busy || runOffset + 20 >= runTotal} onClick={() => setRunOffset((value) => value + 20)}>Next</button></div>}
           </aside>
           <section className="min-w-0 space-y-4 overflow-auto p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xs font-black uppercase tracking-wider">Knowledge graph</h2>
-              {documentId && <button className={BUTTON} onClick={() => onOpenResearchEvidence?.({ material_id: documentId, view: 'source' })}>Back to document</button>}
+              {documentId && !networkId && <button className={BUTTON} onClick={() => onOpenResearchEvidence?.({ material_id: documentId, view: 'source' })}>Back to document</button>}
             </div>
+            <GraphNetworksPanel api={api} active={active} canWrite={canWrite} disabled={!!busy} currentRunId={runId} networkId={networkId} content={networkContent} onSelect={selectNetwork} onLoad={loadNetwork} onBusyChange={networkBusy} />
+            {!networkId && <>
             {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}<button className="ml-3 underline" onClick={() => { setError(''); if (documentId && !runId) { setBusy('document'); setDocumentRetry((value) => value + 1); } else if (runId) void loadRun(runId).catch((cause: Error) => setError(cause.message)); else void refreshRuns().catch((cause: Error) => setError(cause.message)); }}>Refresh</button></div>}
             {notice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
             {busy === 'document' && <p role="status" className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-500">Opening this document’s graph. Entities will appear here after extraction.</p>}
@@ -491,11 +505,13 @@ export function KnowledgeWorkspace({ headerNavigation, initialMaterial, active, 
             </div>}
             {run && data?.ontology && data.batches.length > 0 && (run.status === 'awaiting_annotations' || run.status === 'failed' || RUNNING.has(run.status)) && <details open={!run.automatic_batch_budget_reached && !displayedGraph?.entities.length} className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer text-lg font-semibold">Find concepts in the source text</summary><p className="mt-3 mb-4 text-sm text-slate-500">Keep the original words and their quotation. Add connections when the passage describes them.</p>{canWrite ? <ManualConceptEditor batches={data.batches} ontology={data.ontology} sourceLabels={data.sourceLabels} busy={!!busy || RUNNING.has(run.status)} onSubmit={submitAnnotations} /> : <p className="text-sm text-slate-500">A workspace contributor can add concepts to continue this project.</p>}</details>}
             {run?.status === 'awaiting_frontier' && data && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-lg font-semibold">Enrich document concepts with web sources</h3><p className="mt-1 text-sm text-slate-500">Choose an idea from the documents, then add a relevant public page. Web evidence stays connected to that idea.</p><div className="mt-4 grid gap-4 md:grid-cols-2"><div><label htmlFor="kg-seed-search" className="mb-1 block text-sm font-medium">Document concepts</label><input id="kg-seed-search" className={INPUT} value={seedQuery} placeholder="Find a concept" onChange={(event) => setSeedQuery(event.target.value)} /><div className="mt-2 max-h-60 overflow-y-auto rounded-lg border border-slate-200 p-2">{filteredSeeds.slice(0, 100).map((seed) => <label key={seed.seed_id} className="flex cursor-pointer items-start gap-2 rounded-lg p-2 text-sm hover:bg-slate-50"><input className="mt-1" type="checkbox" checked={chosenSeeds.includes(seed.seed_id)} disabled={!canWrite || !!busy} onChange={(event) => setChosenSeeds((current) => event.target.checked ? [...current, seed.seed_id] : current.filter((id) => id !== seed.seed_id))} /><span>{seed.label}<span className="block text-xs text-slate-400">{seed.entity_type.replace(/([a-z])([A-Z])/g, '$1 $2')}</span></span></label>)}</div>{filteredSeeds.length > 100 && <p className="mt-1 text-xs text-slate-500">Search to narrow these {filteredSeeds.length} concepts.</p>}</div><div><label className="mb-1 block text-sm font-medium" htmlFor="kg-web-url">Relevant web page</label><input id="kg-web-url" className={INPUT} type="url" value={webUrl} placeholder="https://…" onChange={(event) => setWebUrl(event.target.value)} /><button className={`${BUTTON} mt-3`} disabled={!canWrite || !!busy || !webUrl || !chosenSeeds.length} onClick={addWebSource}>Add web source</button>{chosenSeeds.length > 0 && <div className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900"><p className="font-semibold">Search ideas</p>{data.seeds.filter((seed) => chosenSeeds.includes(seed.seed_id)).slice(0, 3).map((seed) => <p key={seed.seed_id} className="mt-1 break-words">{seed.queries[0]}</p>)}</div>}<ul className="mt-4 space-y-2">{frontier.map((entry) => <li key={entry.url} className="flex justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm"><span className="break-all">{entry.url}<span className="block text-xs text-slate-500">Linked to {entry.seed_ids.length} document concept(s)</span></span><button className="text-xs text-slate-500" disabled={!!busy} onClick={() => setFrontier((current) => current.filter((item) => item.url !== entry.url))}>Remove</button></li>)}</ul></div></div><button className={`${PRIMARY} mt-4`} disabled={!canWrite || !!busy || !frontier.length || capabilities?.collection?.available === false} onClick={() => void collect()}>{busy === 'collect' ? 'Starting collection…' : frontier.length ? `Read ${frontier.length} web source${frontier.length === 1 ? '' : 's'}` : 'Read web sources'}</button><button className={`${BUTTON} ml-3 mt-4`} disabled={!canWrite || !!busy} onClick={() => void skipEnrichment()}>Continue with documents only</button>{capabilities?.collection && !capabilities.collection.available && <p className="mt-3 text-sm text-amber-800">Web collection is unavailable in this workspace. You can continue with your saved document concepts.</p>}</div>}
-            {displayedGraph?.partial_extraction && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Partial extraction: these candidates passed the evidence checks. {RUNNING.has(run?.status || '') ? 'Processing is still running; this live view shows up to 20 validated batch checkpoints.' : run?.automatic_batch_budget_reached ? `${displayedGraph.pending_batch_count || 0} source sections remain unfinished. Continue processing to expand this saved draft.` : `${displayedGraph.pending_batch_count || 0} passage batch(es) still need correction.`} This view cannot be published.</p>}
-            {displayedGraph && <GraphExplorer key={runId} graph={displayedGraph || EMPTY_GRAPH} decisions={data?.decisions || []} onReview={review} canReview={canReview} busy={!!busy} onOpenResearchEvidence={onOpenResearchEvidence} />}
-            {run?.status === 'awaiting_review' && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Save a graph version</h3><p className="mt-1 text-sm text-slate-500">A preview shows pending items. A published version contains only items you have included, with their source evidence.</p>{capabilities?.can_review ? <div className="mt-4 flex flex-wrap gap-3"><button className={BUTTON} disabled={!!busy} onClick={() => void release(true)}>Create preview</button><button className={PRIMARY} disabled={!!busy || accepted === 0} onClick={() => void release(false)}>Publish reviewed graph</button><span className="self-center text-xs text-slate-500">{accepted} item(s) included</span></div> : <p className="mt-3 text-sm text-slate-500">A workspace reviewer can publish a graph version.</p>}</div>}
-            {run?.release_path && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{run.status === 'released' ? 'Published graph' : 'Graph preview'} downloads</h3><div className="mt-3 flex flex-wrap gap-3">{[['graph.json', 'Graph data (JSON)'], ['graph.ttl', 'Graph data (RDF)'], ['manifest.json', 'Source and version manifest']].map(([filename, label]) => <GraphDownload key={filename} className={BUTTON} filename={filename} url={`${API_BASE_URL}/research-runs/${run.run_id}/artifacts/${run.release_path}/${filename}`}>{label}</GraphDownload>)}</div></div>}
-            {data?.metrics && (run?.augmentation_enabled || (data.metrics.successful_snapshots || 0) > 0) && <details className="rounded-xl border border-slate-200 bg-white p-4 text-sm"><summary className="cursor-pointer font-semibold">Collection results</summary><p className="mt-3 text-slate-600">{data.metrics.successful_snapshots || 0} saved web page(s). Average new candidate concepts per page: {data.metrics.average_novel_candidates_per_snapshot?.toFixed(2) ?? 'Not available'}.</p><p className="mt-1 text-xs text-slate-500">Candidate yield measures collection output. It does not measure scientific accuracy or completeness.</p>{(data.metrics.collection_attempts || []).map((attempt, index) => <p key={index} className="mt-2 break-words text-xs text-slate-500">{String(attempt.url || attempt.requested_url || 'Web source')} · {String(attempt.status || attempt.reason || 'Recorded attempt').replaceAll('_', ' ')}</p>)}</details>}
+            </>}
+            {networkId && displayedGraph?.partial_extraction && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">This network contains partial document drafts. It represents the saved passages, rather than the complete contents of every document.</p>}
+            {!networkId && displayedGraph?.partial_extraction && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Partial extraction: these candidates passed the evidence checks. {RUNNING.has(run?.status || '') ? 'Processing is still running; this live view shows up to 20 validated batch checkpoints.' : run?.automatic_batch_budget_reached ? `${displayedGraph.pending_batch_count || 0} source sections remain unfinished. Continue processing to expand this saved draft.` : `${displayedGraph.pending_batch_count || 0} passage batch(es) still need correction.`} This view cannot be published.</p>}
+            {displayedGraph && <GraphExplorer key={networkId || runId} graph={displayedGraph || EMPTY_GRAPH} decisions={networkId ? [] : data?.decisions || []} onReview={review} canReview={canReview} busy={!!busy} onOpenResearchEvidence={onOpenResearchEvidence} />}
+            {!networkId && run?.status === 'awaiting_review' && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Save a graph version</h3><p className="mt-1 text-sm text-slate-500">A preview shows pending items. A published version contains only items you have included, with their source evidence.</p>{capabilities?.can_review ? <div className="mt-4 flex flex-wrap gap-3"><button className={BUTTON} disabled={!!busy} onClick={() => void release(true)}>Create preview</button><button className={PRIMARY} disabled={!!busy || accepted === 0} onClick={() => void release(false)}>Publish reviewed graph</button><span className="self-center text-xs text-slate-500">{accepted} item(s) included</span></div> : <p className="mt-3 text-sm text-slate-500">A workspace reviewer can publish a graph version.</p>}</div>}
+            {!networkId && run?.release_path && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{run.status === 'released' ? 'Published graph' : 'Graph preview'} downloads</h3><div className="mt-3 flex flex-wrap gap-3">{[['graph.json', 'Graph data (JSON)'], ['graph.ttl', 'Graph data (RDF)'], ['manifest.json', 'Source and version manifest']].map(([filename, label]) => <GraphDownload key={filename} className={BUTTON} filename={filename} url={`${API_BASE_URL}/research-runs/${run.run_id}/artifacts/${run.release_path}/${filename}`}>{label}</GraphDownload>)}</div></div>}
+            {!networkId && data?.metrics && (run?.augmentation_enabled || (data.metrics.successful_snapshots || 0) > 0) && <details className="rounded-xl border border-slate-200 bg-white p-4 text-sm"><summary className="cursor-pointer font-semibold">Collection results</summary><p className="mt-3 text-slate-600">{data.metrics.successful_snapshots || 0} saved web page(s). Average new candidate concepts per page: {data.metrics.average_novel_candidates_per_snapshot?.toFixed(2) ?? 'Not available'}.</p><p className="mt-1 text-xs text-slate-500">Candidate yield measures collection output. It does not measure scientific accuracy or completeness.</p>{(data.metrics.collection_attempts || []).map((attempt, index) => <p key={index} className="mt-2 break-words text-xs text-slate-500">{String(attempt.url || attempt.requested_url || 'Web source')} · {String(attempt.status || attempt.reason || 'Recorded attempt').replaceAll('_', ' ')}</p>)}</details>}
           </section>
       </div>
     </main>

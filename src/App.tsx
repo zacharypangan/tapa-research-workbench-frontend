@@ -30,7 +30,7 @@ function App() {
     window.clearTimeout(tutorialTimer.current);
     const url = new URL(window.location.href);
     if (view === 'knowledge') url.searchParams.set('view', 'knowledge');
-    else { url.searchParams.delete('view'); url.searchParams.delete('graph'); url.searchParams.delete('material'); }
+    else { url.searchParams.delete('view'); url.searchParams.delete('graph'); url.searchParams.delete('material'); url.searchParams.delete('network'); }
     window.history.replaceState(null, '', url);
     if (view === 'knowledge') setHasOpenedGraph(true);
     setIsTutorialOpen(false);
@@ -41,6 +41,7 @@ function App() {
   const openKnowledgeGraph = useCallback((materialId?: string) => {
     const url = new URL(window.location.href);
     url.searchParams.delete('graph');
+    url.searchParams.delete('network');
     if (materialId) url.searchParams.set('material', materialId);
     else url.searchParams.delete('material');
     window.history.replaceState(null, '', url);

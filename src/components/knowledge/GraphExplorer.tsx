@@ -12,7 +12,7 @@ interface GraphExplorerProps {
   onOpenResearchEvidence?: (target: Omit<ResearchEvidenceNavigation, 'request_id'>) => void;
 }
 
-type Kind = 'concept' | 'relationship' | 'comparison';
+type Kind = 'concept' | 'relationship' | 'comparison' | 'inference';
 type Status = 'pending' | 'included' | 'excluded';
 type Origin = 'primary' | 'web';
 interface Candidate {
@@ -35,7 +35,7 @@ const CONTEXT_KEYS = ['place_id', 'time_id', 'scheme_id', 'production_case_id', 
 const humanize = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
 const label = (entity?: GraphEntity) => entity?.label_en || entity?.label_original || 'Unknown concept';
 const short = (value: string, length = 23) => value.length > length ? `${value.slice(0, length - 1)}…` : value;
-const kindLabel: Record<Kind, string> = { concept: 'Concept', relationship: 'Reported relationship', comparison: 'Proposed comparison' };
+const kindLabel: Record<Kind, string> = { concept: 'Concept', relationship: 'Reported relationship', comparison: 'Proposed comparison', inference: 'Inferred connection' };
 const statusLabel: Record<Status, string> = { pending: 'Pending', included: 'Included', excluded: 'Excluded' };
 
 function origin(source?: GraphSource): Origin {
@@ -146,6 +146,8 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Kind | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<Origin | 'all'>('all');
+  const [documentSourceFilter, setDocumentSourceFilter] = useState('all');
+  const [showInferred, setShowInferred] = useState(true);
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -159,12 +161,12 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const evidence = useMemo(() => new Map(graph.evidence.map(item => [item.evidence_id, item])), [graph.evidence]);
   const activeDecisions = useMemo(() => {
     const active = new Map<string, ReviewDecision>();
-    for (const decision of decisions.length ? decisions : graph.decisions || []) {
+    for (const decision of [...(graph.read_only ? (graph.origin_decisions || []).filter(item => item.decision === 'reject') : []), ...(decisions.length ? decisions : graph.decisions || [])]) {
       const previous = active.get(decision.candidate_id);
       if (!previous || !decision.at || !previous.at || Date.parse(decision.at) >= Date.parse(previous.at)) active.set(decision.candidate_id, decision);
     }
     return active;
-  }, [decisions, graph.decisions]);
+  }, [decisions, graph.decisions, graph.origin_decisions, graph.read_only]);
   const status = (id: string): Status => {
     const decision = activeDecisions.get(id)?.decision;
     return decision === 'accept' ? 'included' : decision === 'reject' ? 'excluded' : 'pending';
@@ -175,24 +177,24 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       id: entity.entity_id, kind: 'concept', title: label(entity), entity,
       evidenceIds: entity.evidence_ids, entityIds: [entity.entity_id], sourceIds: [entity.source_id],
     }));
-    for (const [kind, rows] of [['relationship', graph.assertions], ['comparison', graph.alignments]] as const) {
+    for (const [kind, rows] of [['relationship', graph.assertions], ['comparison', graph.alignments], ['inference', graph.inferences || []]] as const) {
       for (const statement of rows) {
-        const id = statement.assertion_id || statement.alignment_id || statement.candidate_id;
+        const id = statement.assertion_id || statement.alignment_id || statement.inference_id || statement.candidate_id;
         if (!id) continue;
         const contextIds = CONTEXT_KEYS.map(key => statement.scope?.[key]).filter((item): item is string => typeof item === 'string');
-        const entityIds = [...new Set([statement.subject_id, ...(statement.object_id ? [statement.object_id] : []), ...contextIds])];
+        const entityIds = [...new Set([statement.subject_id, ...(statement.object_id ? [statement.object_id] : []), ...(statement.via_entity_ids || []), ...contextIds])];
         const sourceIds = [...new Set([...(statement.source_id ? [statement.source_id] : []), ...entityIds.map(entityId => entities.get(entityId)?.source_id).filter((item): item is string => Boolean(item))])];
         const end = statement.object_id ? label(entities.get(statement.object_id)) : valueLabel(statement.value, entities);
-        const relation = kind === 'comparison' ? 'may correspond to' : humanize(statement.predicate);
+        const relation = kind === 'comparison' ? 'may correspond to' : ({ possibly_same_concept: 'may refer to the same concept as', shares_reported_connection: 'shares a reported connection with', shares_quoted_context: 'appears in quoted context with' } as Record<string, string>)[statement.predicate] || humanize(statement.predicate);
         const qualification = kind === 'relationship' && statement.polarity === 'negative' ? 'Negative claim: ' : kind === 'relationship' && statement.polarity === 'uncertain' ? 'Uncertain claim: ' : '';
         items.push({ id, kind, title: `${qualification}${label(entities.get(statement.subject_id))} → ${relation} → ${end}`, statement, evidenceIds: statement.evidence_ids, entityIds, sourceIds });
       }
     }
     return items;
-  }, [graph.entities, graph.assertions, graph.alignments, entities]);
+  }, [graph.entities, graph.assertions, graph.alignments, graph.inferences, entities]);
   const candidateMap = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate])), [candidates]);
   // Keep the detail panel useful on first load and when switching graphs.
-  const hasActiveFilters = Boolean(query.trim()) || category !== 'all' || sourceFilter !== 'all' || statusFilter !== 'all';
+  const hasActiveFilters = Boolean(query.trim()) || category !== 'all' || sourceFilter !== 'all' || documentSourceFilter !== 'all' || statusFilter !== 'all';
   const selected = candidateMap.get(selectedId || '') || (!hasActiveFilters ? candidates.find(candidate => candidate.kind === 'concept') : undefined);
   const insights = useMemo(() => {
     const connected = new Set<string>();
@@ -228,6 +230,8 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const filtered = useMemo(() => {
     const search = query.trim().toLocaleLowerCase();
     return candidates.filter(candidate => {
+      if (candidate.kind === 'inference' && !showInferred) return false;
+      if (documentSourceFilter !== 'all' && !candidate.sourceIds.includes(documentSourceFilter)) return false;
       if (category !== 'all' && candidate.kind !== category) return false;
       if (sourceFilter !== 'all' && !candidate.sourceIds.some(id => origin(sources.get(id)) === sourceFilter)) return false;
       const decision = activeDecisions.get(candidate.id)?.decision;
@@ -239,11 +243,11 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
         ...candidate.evidenceIds.map(id => evidence.get(id)?.text)].filter(Boolean).join(' ').toLocaleLowerCase();
       return searchable.includes(search);
     });
-  }, [candidates, query, category, sourceFilter, statusFilter, sources, evidence, activeDecisions]);
+  }, [candidates, query, category, sourceFilter, documentSourceFilter, showInferred, statusFilter, sources, evidence, activeDecisions]);
   const selectionOutsideFilters = Boolean(selected && !filtered.some(candidate => candidate.id === selected.id));
   const connectionPages = Math.max(1, Math.ceil(relatedConnections.length / PAGE_SIZE));
   const currentConnectionPage = Math.min(connectionPage, connectionPages - 1);
-  useEffect(() => { setPage(0); }, [query, category, sourceFilter, statusFilter]);
+  useEffect(() => { setPage(0); }, [query, category, sourceFilter, documentSourceFilter, showInferred, statusFilter]);
   useEffect(() => { setRationale(''); setReviewError(null); setConnectionPage(0); }, [selected?.id]);
 
   const network = useMemo(() => {
@@ -268,7 +272,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
     const positions = new Map<string, GraphPoint>();
     for (const [lane, list] of [primary, web].entries()) list.forEach((entity, index) => positions.set(entity.entity_id, { x: 66 + lane * 506 + (index % 4) * 120, y: 76 + Math.floor(index / 4) * 66 }));
     const matchingEdges = connections.filter(candidate => positions.has(candidate.statement!.subject_id) && positions.has(candidate.statement!.object_id!));
-    const edges = [...matchingEdges].sort((a, b) => Number(b.kind === 'comparison') - Number(a.kind === 'comparison') || a.id.localeCompare(b.id)).slice(0, MAX_CONNECTIONS);
+    const edges = [...matchingEdges].sort((a, b) => ({ relationship: 0, comparison: 1, inference: 2, concept: 3 }[a.kind] - { relationship: 0, comparison: 1, inference: 2, concept: 3 }[b.kind]) || a.id.localeCompare(b.id)).slice(0, MAX_CONNECTIONS);
     if (selected?.statement?.object_id && !edges.some(candidate => candidate.id === selected.id)) {
       const selectedEdge = matchingEdges.find(candidate => candidate.id === selected.id);
       if (selectedEdge) { if (edges.length === MAX_CONNECTIONS) edges.pop(); edges.push(selectedEdge); }
@@ -296,7 +300,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
   const reviewBusy = busy || reviewing;
 
   async function review(decision: 'accept' | 'reject') {
-    if (!selected || !canReview || reviewBusy || !rationale.trim()) return;
+    if (!selected || selected.kind === 'inference' || graph.read_only || !canReview || reviewBusy || !rationale.trim()) return;
     setReviewing(true);
     setReviewError(null);
     try {
@@ -315,17 +319,22 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
         <div className="rge-metrics" aria-label="Graph totals">
           <span><strong>{graph.sources.length.toLocaleString()}</strong> sources</span>
           <span><strong>{graph.entities.length.toLocaleString()}</strong> concepts</span>
-          <span><strong>{graph.assertions.length.toLocaleString()}</strong> reported relationships</span>
+          <span><strong>{graph.assertions.length.toLocaleString()}</strong> reported statements</span>
           <span><strong>{graph.alignments.length.toLocaleString()}</strong> proposed comparisons</span>
+          <span><strong>{(graph.inferences || []).length.toLocaleString()}</strong> inferred connections</span>
+          {graph.assertions.some(item => !item.object_id) && <span><strong>{graph.assertions.filter(item => !item.object_id).length.toLocaleString()}</strong> text descriptions</span>}
         </div>
       </div>
+      {(graph.inferences || []).length > 0 && <p className="rge-inference-notice">Inferred connections are suggestions from labels, quoted context or reported paths. They do not establish identity, causation or historical transmission. {graph.inference_report?.truncated ? 'The suggestion limit was reached; this is a bounded set.' : ''}</p>}
       <div className="rge-filters">
         <label className="rge-search">Search concepts, sources or quotations<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="For example: barkcloth, material or place" /></label>
+        {(graph.inferences || []).length > 0 && <label className="rge-inferred-toggle"><input type="checkbox" checked={showInferred} onChange={event => setShowInferred(event.target.checked)} />Show inferred connections</label>}
         <details className="rge-filter-options">
-          <summary>Filters{category !== 'all' || sourceFilter !== 'all' || statusFilter !== 'all' ? ' · active' : ''}</summary>
+          <summary>Filters{category !== 'all' || sourceFilter !== 'all' || documentSourceFilter !== 'all' || statusFilter !== 'all' ? ' · active' : ''}</summary>
           <div className="rge-filter-controls">
-        <label>Show<select value={category} onChange={event => setCategory(event.target.value as Kind | 'all')}><option value="all">All items</option><option value="concept">Concepts</option><option value="relationship">Reported relationships</option><option value="comparison">Proposed comparisons</option></select></label>
+        <label>Show<select value={category} onChange={event => setCategory(event.target.value as Kind | 'all')}><option value="all">All items</option><option value="concept">Concepts</option><option value="relationship">Reported relationships</option><option value="comparison">Proposed comparisons</option><option value="inference">Inferred connections</option></select></label>
         <label>Source<select value={sourceFilter} onChange={event => setSourceFilter(event.target.value as Origin | 'all')}><option value="all">All sources</option><option value="primary">Documents</option><option value="web">Web sources</option></select></label>
+        <label>Document or web page<select value={documentSourceFilter} onChange={event => setDocumentSourceFilter(event.target.value)}><option value="all">All source records</option>{graph.sources.map(source => <option value={source.source_id} key={source.source_id}>{source.title || source.source_id}</option>)}</select></label>
         <label>Review<select value={statusFilter} onChange={event => setStatusFilter(event.target.value as Status | 'all')}><option value="all">All decisions</option><option value="pending">Pending</option><option value="included">Included</option><option value="excluded">Excluded</option></select></label>
           </div>
         </details>
@@ -335,7 +344,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
       <div className="rge-network-panel">
       <div className="rge-network-heading">
         <h4>Connection overview</h4>
-        <div className="rge-legend"><span className="rge-primary-dot">Document concept</span><span className="rge-web-dot">Web concept</span><span className="rge-solid-line">Reported relationship</span><span className="rge-dashed-line">Proposed comparison</span></div>
+        <div className="rge-legend"><span className="rge-primary-dot">Document concept</span><span className="rge-web-dot">Web concept</span><span className="rge-solid-line">Reported relationship</span><span className="rge-dashed-line">Proposed comparison</span>{(graph.inferences || []).length > 0 && <span className="rge-inference-line">Inferred connection</span>}</div>
       </div>
       {network.nodes.length ? (
         <div className="rge-network-scroll" tabIndex={0} role="region" aria-label="Graph canvas. Scroll horizontally to see all concepts.">
@@ -343,7 +352,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             <defs><marker id={arrowId} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto-start-reverse"><path d="M 0 0 L 7 3.5 L 0 7 z" fill="#64748b" /></marker></defs>
             <text x="20" y="28" className="rge-lane-label">DOCUMENTS</text><text x="526" y="28" className="rge-lane-label">WEB SOURCES</text>
             <line x1="500" y1="12" x2="500" y2={network.height - 10} stroke="#e2e8f0" />
-            {network.edges.map(candidate => <g key={candidate.id} onClick={() => setSelectedId(candidate.id)} className={`rge-edge ${candidate.kind === 'comparison' ? 'rge-edge-comparison' : ''} ${status(candidate.id) === 'excluded' ? 'rge-edge-excluded' : ''} ${selected?.id === candidate.id ? 'rge-edge-selected' : ''}`}><title>{candidate.title}</title><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-hit" /><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-visible" markerEnd={candidate.kind === 'relationship' ? `url(#${arrowId})` : undefined} /></g>)}
+            {network.edges.map(candidate => <g key={candidate.id} onClick={() => setSelectedId(candidate.id)} className={`rge-edge ${candidate.kind === 'comparison' ? 'rge-edge-comparison' : candidate.kind === 'inference' ? 'rge-edge-inference' : ''} ${status(candidate.id) === 'excluded' ? 'rge-edge-excluded' : ''} ${selected?.id === candidate.id ? 'rge-edge-selected' : ''}`}><title>{candidate.title}</title><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-hit" /><path d={network.geometries.get(candidate.id)!.path} className="rge-edge-visible" markerEnd={candidate.kind === 'relationship' ? `url(#${arrowId})` : undefined} /></g>)}
             {network.nodes.map(entity => {
               const point = network.positions.get(entity.entity_id)!;
               const selectedNode = selected?.entityIds.includes(entity.entity_id);
@@ -351,12 +360,12 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             })}
             {network.edges.map(candidate => {
               const anchor = network.geometries.get(candidate.id)!.anchor;
-              return <circle key={candidate.id} cx={anchor.x} cy={anchor.y} r="7" role="button" tabIndex={0} aria-label={`${kindLabel[candidate.kind]}: ${candidate.title}`} onClick={() => setSelectedId(candidate.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(candidate.id); } }} className={`rge-connection-target ${candidate.kind === 'comparison' ? 'rge-connection-target-comparison' : ''} ${selected?.id === candidate.id ? 'rge-connection-target-selected' : ''}`}><title>{`${kindLabel[candidate.kind]}: ${candidate.title}`}</title></circle>;
+              return <circle key={candidate.id} cx={anchor.x} cy={anchor.y} r="7" role="button" tabIndex={0} aria-label={`${kindLabel[candidate.kind]}: ${candidate.title}`} onClick={() => setSelectedId(candidate.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(candidate.id); } }} className={`rge-connection-target ${candidate.kind === 'comparison' ? 'rge-connection-target-comparison' : candidate.kind === 'inference' ? 'rge-connection-target-inference' : ''} ${selected?.id === candidate.id ? 'rge-connection-target-selected' : ''}`}><title>{`${kindLabel[candidate.kind]}: ${candidate.title}`}</title></circle>;
             })}
           </svg>
         </div>
       ) : <p className="rge-empty">No concepts match these filters.</p>}
-      <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Scroll the graph horizontally when needed. Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
+      <p className="rge-caption">Showing {network.nodes.length.toLocaleString()} of {network.total.toLocaleString()} matching concepts and {network.edges.length.toLocaleString()} of {network.totalConnections.toLocaleString()} connections between them. {network.total > MAX_NODES || network.totalConnections > MAX_CONNECTIONS ? 'The overview prioritizes connected concepts and cross-source comparisons; the searchable list contains every matching item. ' : ''}Text descriptions appear in the searchable list and inspector rather than as concept-to-concept edges. Scroll the graph horizontally when needed. Original source accounts remain separate. Select a concept or a small circle on a connection to read its evidence.</p>
       </div>
       <section className="rge-insights" aria-labelledby={`${controlId}-insights`}>
         <h4 id={`${controlId}-insights`}>Graph insights</h4>
@@ -389,11 +398,12 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             <h4>{selected.title}</h4>
             {selected.entity && <><p className="rge-subtle">{humanize(selected.entity.entity_type)} · {origin(sources.get(selected.entity.source_id)) === 'web' ? 'Web source account' : 'Document source account'}</p>{selected.entity.label_en && selected.entity.label_en !== selected.entity.label_original && <p className="rge-translation">English label: proposed translation awaiting review.<br />Original label: <span>{selected.entity.label_original}</span></p>}
               <dl className="rge-context"><dt>Source</dt><dd>{sources.get(selected.entity.source_id)?.title || selected.entity.source_id}</dd>{Object.entries(selected.entity.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
-              <div className="rge-related"><h5>Connections <span>({relatedConnections.length.toLocaleString()})</span></h5>{relatedConnections.length ? <><div className="rge-related-items">{relatedConnections.slice(currentConnectionPage * PAGE_SIZE, (currentConnectionPage + 1) * PAGE_SIZE).map(candidate => <button type="button" key={candidate.id} onClick={() => setSelectedId(candidate.id)}><span>{candidate.kind === 'comparison' ? 'Proposed comparison' : candidate.statement?.subject_id === selected.id ? 'Outgoing' : candidate.statement?.object_id === selected.id ? 'Incoming' : 'Context'}</span>{candidate.title}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></button>)}</div>{connectionPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentConnectionPage === 0} onClick={() => setConnectionPage(currentConnectionPage - 1)}>Previous</button><span>Page {currentConnectionPage + 1} of {connectionPages}</span><button type="button" disabled={currentConnectionPage >= connectionPages - 1} onClick={() => setConnectionPage(currentConnectionPage + 1)}>Next</button></div>}</> : <p className="rge-subtle">No recorded relationship or comparison refers to this concept in the current graph view.</p>}</div>
+              <div className="rge-related"><h5>Connections <span>({relatedConnections.length.toLocaleString()})</span></h5>{relatedConnections.length ? <><div className="rge-related-items">{relatedConnections.slice(currentConnectionPage * PAGE_SIZE, (currentConnectionPage + 1) * PAGE_SIZE).map(candidate => <button type="button" key={candidate.id} onClick={() => setSelectedId(candidate.id)}><span>{candidate.kind === 'inference' ? 'Inferred connection' : candidate.kind === 'comparison' ? 'Proposed comparison' : candidate.statement?.subject_id === selected.id ? 'Outgoing' : candidate.statement?.object_id === selected.id ? 'Incoming' : 'Context'}</span>{candidate.title}<span className={`rge-status rge-status-${status(candidate.id)}`}>{statusLabel[status(candidate.id)]}</span></button>)}</div>{connectionPages > 1 && <div className="rge-pagination"><button type="button" disabled={currentConnectionPage === 0} onClick={() => setConnectionPage(currentConnectionPage - 1)}>Previous</button><span>Page {currentConnectionPage + 1} of {connectionPages}</span><button type="button" disabled={currentConnectionPage >= connectionPages - 1} onClick={() => setConnectionPage(currentConnectionPage + 1)}>Next</button></div>}</> : <p className="rge-subtle">No recorded relationship or comparison refers to this concept in the current graph view.</p>}</div>
             </>}
             {selected.statement && <>
-              <dl className="rge-context"><dt>Meaning</dt><dd>{selected.kind === 'comparison' ? 'A possible correspondence between two source accounts; the concepts remain separate.' : humanize(selected.statement.epistemic_kind || 'source_report')}</dd><dt>Statement</dt><dd>{selected.kind === 'comparison' ? 'Proposed comparison' : selected.statement.polarity === 'negative' ? 'Negative claim' : selected.statement.polarity === 'uncertain' ? 'Uncertain claim' : 'Affirmative claim'}</dd>{Object.entries(selected.statement.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
+              <dl className="rge-context"><dt>Meaning</dt><dd>{selected.kind === 'inference' ? 'An unverified navigation proposal derived from the cited context or premises; not a source-reported fact.' : selected.kind === 'comparison' ? 'A possible correspondence between two source accounts; the concepts remain separate.' : humanize(selected.statement.epistemic_kind || 'source_report')}</dd><dt>Statement</dt><dd>{selected.kind === 'inference' ? 'Uncertain inferred connection' : selected.kind === 'comparison' ? 'Proposed comparison' : selected.statement.polarity === 'negative' ? 'Negative claim' : selected.statement.polarity === 'uncertain' ? 'Uncertain claim' : 'Affirmative claim'}</dd>{Object.entries(selected.statement.scope || {}).filter(([key]) => key !== 'seed_ids').map(([key, value]) => <div className="rge-context-pair" key={key}><dt>{humanize(key.replace(/_id$/, ''))}</dt><dd>{valueLabel(value, entities)}</dd></div>)}</dl>
               {selected.statement.rationale && <p className="rge-rationale">{selected.statement.rationale}</p>}
+              {selected.kind === 'inference' && <div className="rge-inference-premises"><strong>Why this connection was suggested</strong><p>{humanize(selected.statement.rule || 'Evidence context')}</p>{selected.statement.translation_involved && <p>A proposed translation contributes to this match and requires review.</p>}{(selected.statement.premise_ids || []).map(id => { const premise = candidateMap.get(id); return premise ? <button key={id} type="button" onClick={() => setSelectedId(id)}>{premise.title}</button> : <p key={id}>Recorded premise: {id}</p>; })}</div>}
               {dependencies.length > 0 && <div className="rge-dependencies"><strong>Required concepts</strong><div>{dependencies.map(entity => <button type="button" key={entity.entity_id} onClick={() => setSelectedId(entity.entity_id)}>{label(entity)} <span className={`rge-status rge-status-${status(entity.entity_id)}`}>{statusLabel[status(entity.entity_id)]}</span></button>)}</div></div>}
               {excludedDependencies.length > 0 && <p className="rge-blocked">This connection is excluded from releases while a required concept is excluded. Review that concept first.</p>}
             </>}
@@ -409,7 +419,7 @@ export function GraphExplorer({ graph, decisions, onReview, canReview, busy, onO
             <div className="rge-review-actions">
               <h5>Review for graph inclusion</h5><p>Inclusion records a curation decision, not scientific verification.</p>
               {activeDecisions.get(selected.id) && <p className="rge-last-review">Latest decision: {activeDecisions.get(selected.id)?.rationale}</p>}
-              {canReview ? <><label htmlFor={`${controlId}-rationale`}>Reason for this decision<textarea id={`${controlId}-rationale`} value={rationale} onChange={event => setRationale(event.target.value)} placeholder="Explain why the evidence should be included or excluded." rows={3} maxLength={2000} disabled={reviewBusy} /></label>{pendingDependencies.length > 0 && <p className="rge-subtle">Including this connection also includes {pendingDependencies.length} required {pendingDependencies.length === 1 ? 'concept' : 'concepts'} listed above.</p>}<div className="rge-action-buttons"><button type="button" className="rge-include" disabled={reviewBusy || !rationale.trim() || excludedDependencies.length > 0 || !selectedEvidence.length} onClick={() => void review('accept')}>{reviewing ? 'Saving…' : 'Include in graph'}</button><button type="button" className="rge-exclude" disabled={reviewBusy || !rationale.trim()} onClick={() => void review('reject')}>Exclude</button></div></> : <p className="rge-subtle">{graph.release_kind ? 'This published version is read-only. Start a new graph to make changes.' : 'A reviewer can record inclusion decisions. You can explore all quotations and connections.'}</p>}
+              {canReview && !graph.read_only && selected.kind !== 'inference' ? <><label htmlFor={`${controlId}-rationale`}>Reason for this decision<textarea id={`${controlId}-rationale`} value={rationale} onChange={event => setRationale(event.target.value)} placeholder="Explain why the evidence should be included or excluded." rows={3} maxLength={2000} disabled={reviewBusy} /></label>{pendingDependencies.length > 0 && <p className="rge-subtle">Including this connection also includes {pendingDependencies.length} required {pendingDependencies.length === 1 ? 'concept' : 'concepts'} listed above.</p>}<div className="rge-action-buttons"><button type="button" className="rge-include" disabled={reviewBusy || !rationale.trim() || excludedDependencies.length > 0 || !selectedEvidence.length} onClick={() => void review('accept')}>{reviewing ? 'Saving…' : 'Include in graph'}</button><button type="button" className="rge-exclude" disabled={reviewBusy || !rationale.trim()} onClick={() => void review('reject')}>Exclude</button></div></> : <p className="rge-subtle">{graph.read_only ? 'This combined snapshot is read-only. Original source review decisions remain with their graphs; inferred connections require separate specialist review.' : graph.release_kind ? 'This published version is read-only. Start a new graph to make changes.' : 'A reviewer can record inclusion decisions. You can explore all quotations and connections.'}</p>}
               {reviewError && <p role="alert" className="rge-blocked">{reviewError}</p>}
             </div>
           </>}

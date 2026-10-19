@@ -126,3 +126,13 @@
 .rge-empty-inspector > p { font-size: 13px; }
 @media (min-width: 1200px) { .rge-workspace { grid-template-columns: minmax(0, 1fr) minmax(310px, 36%); } .rge-inspector { position: sticky; top: 16px; max-height: calc(100vh - 150px); overflow: auto; } }
 @media (max-width: 600px) { .rge-filters label:not(.rge-search) { flex: 1 1 120px; } .rge-filters select { width: 100%; min-width: 0; } .rge-inspector { padding: 15px; } .rge-metrics { gap: 7px 15px; } .rge-insight-totals { grid-template-columns: minmax(0, 1fr); gap: 8px; } .rge-insight-totals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } }
+
+.rge-inference-notice { margin: 14px 0 0; padding: 10px 12px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; font-size: 12px; }
+.rge-filters .rge-inferred-toggle { display: flex; flex-direction: row; align-items: center; gap: 7px; min-height: 40px; }
+.rge-inferred-toggle input { min-height: auto; width: 16px; height: 16px; }
+.rge-inference-line::before { content: ''; width: 16px; border-top: 2px dotted #c2410c; }
+.rge-edge-inference .rge-edge-visible { stroke: #c2410c; stroke-dasharray: 2 5; opacity: .65; }
+.rge-connection-target-inference { stroke: #c2410c; }
+.rge-inference-premises { margin: 14px 0; padding: 12px; background: #fff7ed; border-radius: 8px; font-size: 12px; }
+.rge-inference-premises p { margin: 6px 0; }
+.rge-inference-premises button { display: block; width: 100%; margin-top: 6px; padding: 7px; border: 1px solid #fdba74; border-radius: 6px; background: white; text-align: left; }
