@@ -6,7 +6,7 @@ interface ProcessingJob {
   stage: string;
   detail?: string;
   retryable?: boolean;
-  stage_progress?: Record<string, { indexed_count?: number; pending_count?: number; failed_count?: number; skipped_count?: number;
+  stage_progress?: Record<string, { indexed_count?: number; pending_count?: number; failed_count?: number; skipped_count?: number; pass_processed_image_count?: number;
     error_summary?: Array<{ error_category: string; http_status?: number; retryable: boolean; count: number }> }>;
   completed_stages?: Record<string, { result?: { run_id?: string } }>;
 }
@@ -83,6 +83,7 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
 
   const active = ['queued', 'running'].includes(data?.job?.status || '');
   const graphId = data?.job?.completed_stages?.graph?.result?.run_id;
+  const imageDescriptionProgress = data?.job?.stage_progress?.image_describe;
   const imageErrors = [
     ...(data?.job?.stage_progress?.image_describe?.error_summary || []),
     ...(data?.job?.stage_progress?.image_index?.error_summary || []),
@@ -102,6 +103,7 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
     {data && <>
       <p className="mt-2 text-xs text-slate-600" role="status">{data.job?.status === 'error' ? 'Needs attention' : STAGES[data.job?.stage || 'queued'] || data.job?.stage}</p>
       <p className="mt-2 text-xs text-slate-500">Text indexed for similarity: {data.coverage.embedded_segment_count}/{data.coverage.eligible_segment_count} · Images indexed for similarity: {data.coverage.embedded_image_count}/{data.coverage.eligible_image_count}</p>
+      {imageDescriptionProgress && <p role="status" className="mt-1 text-xs text-slate-500">Images checked this pass: {imageDescriptionProgress.pass_processed_image_count ?? '—'} · Awaiting check: {imageDescriptionProgress.pending_count ?? '—'} · Need attention: {imageDescriptionProgress.failed_count ?? '—'}</p>}
       {!!data.coverage.ocr_only_searchable_image_count && <p className="mt-1 text-xs text-slate-500">Text from {data.coverage.ocr_only_searchable_image_count} image(s) is searchable while descriptions need attention.</p>}
       {!!data.coverage.skipped_image_count && <p className="mt-1 text-xs text-slate-500">{data.coverage.skipped_image_count} image(s) skipped by the informative-image check.</p>}
       {data.coverage.eligible_image_count > 0 && <div className="mt-2">
