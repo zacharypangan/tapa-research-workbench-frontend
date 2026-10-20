@@ -165,9 +165,23 @@ export interface SearchReport {
   results: SearchReportResult[];
 }
 
+export interface ProcessingServiceStatus {
+  configured: boolean;
+  ready: boolean | null;
+  state: 'ready' | 'unavailable' | 'not_configured' | 'unverified' | 'blocked' | 'partial';
+  detail: string;
+  provider?: string;
+  model?: string;
+  verification?: string;
+  dependency_ready?: boolean;
+  depends_on?: string[];
+}
+
 export interface AIStatus {
   keyword_review_available?: boolean;
   provider_configured: boolean;
+  chat_configured?: boolean;
+  embedding_configured?: boolean;
   embedding_model?: string;
   chat_model?: string;
   segment_count?: number;
@@ -176,6 +190,7 @@ export interface AIStatus {
   embedded_image_count?: number;
   default_mode?: string;
   status_message?: string;
+  services?: Record<string, ProcessingServiceStatus>;
 }
 
 export interface SemanticResult {

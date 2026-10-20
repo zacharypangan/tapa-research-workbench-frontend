@@ -36,6 +36,7 @@ import { buildPrintableReportHtml } from './repository/printableReport';
 import { SearchReportModal } from './repository/SearchReportModal';
 import { DocumentProcessingStatus } from './repository/DocumentProcessingStatus';
 import { DocumentTranslation } from './repository/DocumentTranslation';
+import { ProcessingServices } from './repository/ProcessingServices';
 import { WorkbenchHeader } from './WorkbenchHeader';
 import type {
   AIEvidenceReport,
@@ -94,6 +95,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   const [searchReport, setSearchReport] = useState<SearchReport | null>(null);
   const [showSearchReportModal, setShowSearchReportModal] = useState(false);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [aiStatusUnavailable, setAiStatusUnavailable] = useState(false);
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResponse | null>(null);
   const [askCorpusResult, setAskCorpusResult] = useState<AskCorpusResponse | null>(null);
   const [aiEvidenceReport, setAiEvidenceReport] = useState<AIEvidenceReport | null>(null);
@@ -150,10 +152,20 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
   );
 
   const loadAiStatus = useCallback(async () => {
-    const response = await repositoryFetch('/ai/status');
-    if (!response.ok) return;
-    const data = await response.json();
-    setAiStatus(data);
+    try {
+      const response = await repositoryFetch('/ai/status');
+      if (!response.ok) {
+        setAiStatusUnavailable(true);
+        return false;
+      }
+      const data = await response.json();
+      setAiStatus(data);
+      setAiStatusUnavailable(false);
+      return true;
+    } catch (cause) {
+      setAiStatusUnavailable(true);
+      throw cause;
+    }
   }, [repositoryFetch]);
 
   const selectedStatusCount = useMemo(() => {
@@ -194,10 +206,10 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
     ).length;
   }, [observations]);
 
-  const chatAssistantReady = Boolean((aiStatus as any)?.chat_configured ?? aiStatus?.provider_configured);
+  const chatAssistantReady = Boolean(aiStatus?.chat_configured ?? aiStatus?.provider_configured);
   const hasExplicitEmbeddingStatus = Boolean(aiStatus && 'embedding_configured' in aiStatus);
   const embeddingAssistantReady = hasExplicitEmbeddingStatus
-    ? Boolean((aiStatus as any)?.embedding_configured)
+    ? Boolean(aiStatus?.embedding_configured)
     : Boolean(aiStatus?.provider_configured);
   const evidenceAssistantReady = Boolean(chatAssistantReady && (embeddingAssistantReady || aiStatus?.keyword_review_available));
   const activeQueryTerms = useMemo(() => buildQueryTerms(fullTextQuery), [fullTextQuery]);
@@ -1403,6 +1415,7 @@ export default function RepositoryWorkbench({ onOpenTutorial, activeTutorialTarg
           </aside>
 
           <section className="min-h-0 overflow-auto p-4">
+            <ProcessingServices status={aiStatus} unavailable={aiStatusUnavailable} onRefresh={loadAiStatus} />
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Materials</h3>

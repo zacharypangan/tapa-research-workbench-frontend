@@ -24,8 +24,8 @@ interface Preparation {
 }
 
 const STAGES: Record<string, string> = {
-  queued: 'Waiting to start', extract: 'Reading text and OCR', graph: 'Preparing graph draft',
-  text_index: 'Indexing text', image_index: 'Describing and indexing images', complete: 'Preparation complete',
+  queued: 'Waiting to start', extract: 'Reading text and OCR', image_describe: 'Describing images', graph: 'Preparing graph draft',
+  text_index: 'Indexing text for similarity', image_index: 'Describing and indexing images', complete: 'Preparation complete',
 };
 
 export function DocumentProcessingStatus({ materialId, request, onComplete, onOpenGraph }: {
@@ -67,13 +67,13 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
     return () => { stopped = true; controller.abort(); clearTimeout(timer); };
   }, [materialId, request, refresh]);
 
-  const start = async () => {
+  const start = async (imagesOnly = false) => {
     setBusy(true); setError('');
     try {
-      const retry = data?.job?.status === 'error';
+      const retry = !imagesOnly && data?.job?.status === 'error';
       const response = await request(retry ? `/processing-jobs/${data!.job!.job_id}/retry` : `/materials/${materialId}/process`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        ...(retry ? {} : { body: JSON.stringify({ force: data?.job?.status === 'done' }) }),
+        ...(retry ? {} : { body: JSON.stringify(imagesOnly ? { stages: ['image_describe'], force: true } : { force: data?.job?.status === 'done' }) }),
       });
       if (!response.ok) throw new Error('Could not start preparation. Your source is saved.');
       setRefresh(value => value + 1);
@@ -83,7 +83,10 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
 
   const active = ['queued', 'running'].includes(data?.job?.status || '');
   const graphId = data?.job?.completed_stages?.graph?.result?.run_id;
-  const imageErrors = data?.job?.stage_progress?.image_index?.error_summary || [];
+  const imageErrors = [
+    ...(data?.job?.stage_progress?.image_describe?.error_summary || []),
+    ...(data?.job?.stage_progress?.image_index?.error_summary || []),
+  ];
   const imageIssue = imageErrors.some(item => item.http_status === 404)
     ? 'Image descriptions are paused because the vision service returned “not found.” Check its model and service settings, then retry. Text already read from images remains searchable.'
     : imageErrors.some(item => item.error_category === 'authentication')
@@ -98,12 +101,16 @@ export function DocumentProcessingStatus({ materialId, request, onComplete, onOp
     </div>
     {data && <>
       <p className="mt-2 text-xs text-slate-600" role="status">{data.job?.status === 'error' ? 'Needs attention' : STAGES[data.job?.stage || 'queued'] || data.job?.stage}</p>
-      <p className="mt-2 text-xs text-slate-500">Searchable text: {data.coverage.embedded_segment_count}/{data.coverage.eligible_segment_count} · Images prepared: {data.coverage.embedded_image_count}/{data.coverage.eligible_image_count}</p>
+      <p className="mt-2 text-xs text-slate-500">Text indexed for similarity: {data.coverage.embedded_segment_count}/{data.coverage.eligible_segment_count} · Images indexed for similarity: {data.coverage.embedded_image_count}/{data.coverage.eligible_image_count}</p>
       {!!data.coverage.ocr_only_searchable_image_count && <p className="mt-1 text-xs text-slate-500">Text from {data.coverage.ocr_only_searchable_image_count} image(s) is searchable while descriptions need attention.</p>}
       {!!data.coverage.skipped_image_count && <p className="mt-1 text-xs text-slate-500">{data.coverage.skipped_image_count} image(s) skipped by the informative-image check.</p>}
+      {data.coverage.eligible_image_count > 0 && <div className="mt-2">
+        <button type="button" disabled={busy || active} onClick={() => void start(true)} className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Read and describe images</button>
+        <p className="mt-1 text-[11px] text-slate-500">Prepare image text without waiting for the embedding service.</p>
+      </div>}
       {(imageIssue || data.job?.detail) && <p className="mt-2 break-words text-xs text-amber-800">{imageIssue || data.job?.detail}</p>}
       {graphId && onOpenGraph && <button type="button" onClick={onOpenGraph} className="mt-2 text-xs font-semibold text-blue-700 underline">Open graph draft and evidence</button>}
-      <p className="mt-2 text-xs text-slate-400">Text and OCR feed both search and graph drafts. Graph inclusion and publication remain review steps.</p>
+      <p className="mt-2 text-xs text-slate-400">Extracted text and OCR remain available to exact search independently of similarity indexes. Graph inclusion and publication remain review steps.</p>
     </>}
     {error && <p className="mt-2 text-xs text-amber-800" role="alert">{error}</p>}
   </section>;
