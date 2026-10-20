@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { AIStatus, ProcessingServiceStatus } from './types';
 
 const SERVICES = [
@@ -26,8 +26,17 @@ export function ProcessingServices({ status, unavailable, onRefresh }: {
   onRefresh: () => Promise<boolean>;
 }) {
   const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState('');
+  const detailsId = useId();
   const services = status?.services;
+  const counts = SERVICES.reduce((result, [key]) => {
+    const service = services?.[key];
+    if (service?.ready === true) result.ready += 1;
+    else if (service?.ready === false || ['partial', 'blocked', 'unavailable', 'not_configured'].includes(service?.state || '')) result.attention += 1;
+    else result.unverified += 1;
+    return result;
+  }, { ready: 0, attention: 0, unverified: 0 });
   const refresh = async () => {
     setRefreshing(true);
     setError('');
@@ -42,12 +51,22 @@ export function ProcessingServices({ status, unavailable, onRefresh }: {
 
   return <section aria-label="Processing services" className="mb-3 rounded-xl border border-slate-200 bg-white p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="text-xs font-bold text-slate-700">Processing services</h3>
-      <button type="button" disabled={refreshing} onClick={() => void refresh()} className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">
-        {refreshing ? 'Checking…' : 'Refresh status'}
-      </button>
+      <div>
+        <h3 className="text-xs font-bold text-slate-700">Processing services</h3>
+        <p aria-live="polite" className="mt-1 text-[11px] text-slate-500">{counts.ready} ready · {counts.attention} need attention · {counts.unverified} unverified</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(value => !value)} className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+          {expanded ? 'Hide services' : 'Show services'}
+        </button>
+        <button type="button" disabled={refreshing} onClick={() => void refresh()} className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+          {refreshing ? 'Checking…' : 'Refresh status'}
+        </button>
+      </div>
     </div>
-    <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+    {unavailable ? <p role="status" className="mt-2 text-xs text-amber-800">Backend service status is unavailable. Previous results may be out of date.</p> : null}
+    <div id={detailsId} hidden={!expanded}>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {SERVICES.map(([key, label]) => {
         const service = services?.[key];
         const presentation = servicePresentation(service);
@@ -63,10 +82,11 @@ export function ProcessingServices({ status, unavailable, onRefresh }: {
           </details> : null}
         </div>;
       })}
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+        {services ? 'Ready reflects a service check, not document completion. Not verified means that specific operation has not been checked. Status checks may be cached.' : status ? 'This backend does not report individual service checks. Availability cannot be confirmed here.' : 'Waiting for backend service checks.'}
+      </p>
     </div>
-    <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-      {unavailable ? 'Backend service status is unavailable. Previous results, if shown, may be out of date.' : services ? 'Ready reflects a service check, not document completion. Not verified means that specific operation has not been checked. Status checks may be cached.' : status ? 'This backend does not report individual service checks. Availability cannot be confirmed here.' : 'Waiting for backend service checks.'}
-    </p>
     {error ? <p role="alert" className="mt-2 text-xs text-amber-800">{error}</p> : null}
   </section>;
 }
